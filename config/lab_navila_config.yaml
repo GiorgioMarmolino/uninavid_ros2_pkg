@@ -1,0 +1,102 @@
+# ============================================================================
+# lab_navila_config.yaml
+#
+# Configuration tuned for indoor laboratory operation.
+#
+# Assumptions:
+# - Real robot (use_sim_time = false)
+# - Indoor environment with narrow passages and nearby obstacles
+# - ZED depth camera available
+# - Velodyne pointcloud converted to /scan
+#
+# This configuration prioritizes safety and smooth motion over maximum speed.
+# ============================================================================
+
+action_node:
+  ros__parameters:
+    use_sim_time: false
+
+    # Topics
+    action_topic: "/navila/action"
+    odom_topic: "/platform/odom/filtered"
+    status_topic: "/navila/primitive_status"
+
+    # cmd_vel_topic is NOT set here: it is dynamic (depends on enable_safety)
+    # and is set by the launch file.
+
+    # Per-token velocities
+    linear_x:       0.4    # m/s    — "forward"
+    linear_x_fast:  0.6    # m/s    — "forward_fast"
+    linear_x_back:  0.2    # m/s    — "backward"
+    angular_z:      0.35   # rad/s  — in-place rotation
+    curve_linear:   0.2    # m/s    — linear component of "curve_*"
+    curve_angular:  0.4    # rad/s  — angular component of "curve_*"
+
+    # Watchdog / smoothing
+    cmd_timeout_sec:   1.0   # s      — watchdog: stop if no cmd
+    watchdog_rate_sec: 0.05  # s      — watchdog timer period (20 Hz)
+    publish_rate_sec:  0.05  # s      — publish period (20 Hz)
+    max_acc_linear:    0.5   # m/s²   — max linear acceleration
+    max_acc_angular:   1.0   # rad/s² — max angular acceleration
+
+
+safety_layer_node:
+  ros__parameters:
+    use_sim_time: false
+
+    # Topics
+    cmd_in_topic:  "/cmd_vel_raw"
+    cmd_out_topic: "/cmd_vel"
+    scan_topic:    "/scan"
+    depth_topic:   "/zed/depth/depth_registered"
+    enable_depth:  true
+
+    # Safety distances
+    front_stop_dist: 1.2   # m   — front distance for hard stop
+    front_slow_dist: 1.5   # m   — front distance to start slowing down
+    side_stop_dist:  1.0   # m   — side distance
+    rear_stop_dist:  1.2   # m   — rear distance
+
+    # Sector FOVs
+    front_fov_deg: 60.0    # deg
+    side_fov_deg:  20.0    # deg
+    rear_fov_deg:  10.0    # deg
+
+    # Front offset in the scan array (VLP-16 ~ 90 deg)
+    lidar_front_angle_deg: 0.0
+
+    # Timeouts / smoothing
+    lidar_timeout_sec: 1.0   # s      — max time without a scan
+    cmd_timeout_sec:   1.5   # s      — watchdog on the incoming command
+    depth_timeout_sec: 0.5   # s      — beyond this the depth is "stale"
+    publish_rate_sec:  0.05  # s      — publish period (20 Hz)
+    max_acc_linear:    0.5   # m/s²   — max linear acceleration
+    max_acc_angular:   1.0   # rad/s² — max angular acceleration
+    turn_reduction:    0.4   # near-side turn reduction factor
+
+
+navila_super_node:
+  ros__parameters:
+    use_sim_time: false
+
+    # Model paths
+    model_path:      "/models"
+    phi3_model_path: "/models/phi3mini"
+
+    # Topics
+    image_topic:  "/zed/rgb/color/rect/image/compressed"
+    goal_topic:   "/goal_instruction"
+    odom_topic:   "/platform/odom"
+    action_topic: "/navila/action"
+    reset_topic:  "/navila/reset"
+    status_topic: "/navila/primitive_status"
+
+    # Inference
+    inference_rate_hz: 2.0
+    num_video_frames : 8      # N=8 frames (7 historical + 1 current) as per NaVILA paper
+    max_history_frames: 512    # maximum number of historical frames to keep
+    use_phi3:          false   # enable Phi-3 classifier
+    phi3_4bit:         false    # quantize Phi-3 to 4-bit
+    frame_wait_timeout_sec: 1.0  # attesa max frame post-moto
+    frame_settle_sec: 0.0        # margine settling robot/camera
+    input_color_order: "BGR"  # "RGB" or "BGR"

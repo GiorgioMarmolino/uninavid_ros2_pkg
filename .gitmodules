@@ -1,0 +1,3 @@
+[submodule "third_party/Uni-NaVid"]
+	path = third_party/Uni-NaVid
+	url = git@github.com:GiorgioMarmolino/Uni-NaVid.git
