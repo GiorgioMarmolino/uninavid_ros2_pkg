@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-
+import os
 import threading
+import urllib.request
 from collections import deque
 
 import cv2
@@ -14,19 +15,20 @@ from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import String, Empty
 from sensor_msgs.msg import CompressedImage
 
-from uni_navid.third_party.uni_navid_agent import UniNaVid_Agent    
+from uni_navid.third_party.uni_navid_agent import UniNaVid_Agent
 
 from huggingface_hub import snapshot_download
 
 UNINAVID_REPO_ID = "Jzzhang/Uni-NaVid"
+EVA_VIT_G_URL = "https://storage.googleapis.com/sfr-vision-language-research/LAVIS/models/BLIP2/eva_vit_g.pth"
 
 
 class UniNaVidNode(Node):
     def __init__(self, vla_model="uninavid"):
         super().__init__("uninavid_node")
 
-        # ---- parametri ----
-        self.declare_parameter("model_path", "/models")
+        # ---- parameters ----
+        self.declare_parameter("model_path", os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni-navid"))
         self.declare_parameter("image_topic", "")
         self.declare_parameter("goal_topic", "/goal_instruction")
         self.declare_parameter("action_topic", f"/{vla_model}/action")
@@ -41,7 +43,7 @@ class UniNaVidNode(Node):
         reset_topic = prm("reset_topic")
         status_topic = prm("status_topic")
 
-        # ---- stato ----
+        # ---- state ----
         self._agent = None
         self._model_ready = False
         self._lock = threading.Lock()
@@ -68,20 +70,40 @@ class UniNaVidNode(Node):
     def _load_model_thread(self, model_path):
         try:
             model_path = self.ensure_model(model_path)
-            
-            self._agent = UniNaVid_Agent(model_path)
-            self._agent.reset(task_type="vln")
+            self._agent = UniNaVid_Agent(model_path)  # agent resets itself in __init__
             with self._lock:
                 self._model_ready = True
             self.get_logger().info("UniNaVid ready - waiting for goal instruction")
         except Exception as e:
             self.get_logger().error(f"Error while loading model: {e}")
 
-    # ================= Inferenza =================
+    @staticmethod
+    def ensure_model(model_path: str, repo_id: str = UNINAVID_REPO_ID) -> str:
+        # Uni-NaVid checkpoint
+        if not (os.path.isdir(model_path) and os.listdir(model_path)):
+            os.makedirs(model_path, exist_ok=True)
+            snapshot_download(repo_id=repo_id, local_dir=model_path, local_dir_use_symlinks=False)
+
+        # EVA-ViT-G encoder -> /models, symlinked where the model code expects it
+        models_root = os.environ["UNINAVID_MODEL_PATH"]
+        eva_dst = os.path.join(models_root, "eva_vit_g.pth")
+        if not os.path.isfile(eva_dst):
+            urllib.request.urlretrieve(EVA_VIT_G_URL, eva_dst)
+
+        link = os.path.join(os.environ["UNINAVID_REPO_DIR"], "model_zoo", "eva_vit_g.pth")
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        if not os.path.islink(link):
+            if os.path.exists(link):
+                os.remove(link)
+            os.symlink(eva_dst, link)
+
+        return model_path
+
+    # ================= Inference =================
     def infer_action(self, frame, goal):
-        # streaming: passo SOLO il frame corrente, la history la tiene il modello
+        # streaming: pass only the current frame, the model keeps the history
         result = self._agent.act({"instruction": goal, "observations": frame})
-        return result["actions"]    # es. ["forward", "forward", "left", "stop"]
+        return result["actions"]
 
     # ================= Callbacks =================
     def _image_cb(self, msg: CompressedImage):
@@ -94,7 +116,7 @@ class UniNaVidNode(Node):
             return
         self._goal = goal
         self._reset_agent()
-        self.get_logger().info(f"Nuovo goal: {goal}")
+        self.get_logger().info(f"New goal: {goal}")
         self._step()
 
     def _reset_cb(self, msg: Empty):
@@ -103,17 +125,15 @@ class UniNaVidNode(Node):
         self.get_logger().info("Reset")
 
     def _status_cb(self, msg: String):
-        # il nodo action->cmd_vel segnala qui quando ha finito la primitiva
         if msg.data.strip().lower() in ("done", "idle", "ready"):
             self._busy = False
             self._step()
 
-    # ================= Loop step-synchronous =================
+    # ================= Step-synchronous loop =================
     def _step(self):
         if self._busy or self._goal is None or not self._model_ready:
             return
 
-        # coda vuota -> nuova inferenza sul frame corrente
         if not self._queue:
             frame = self._decode_latest()
             if frame is None:
@@ -130,9 +150,9 @@ class UniNaVidNode(Node):
         if action == "stop":
             self._goal = None
             self._queue.clear()
-            self.get_logger().info("STOP raggiunto")
+            self.get_logger().info("STOP reached")
 
-    # ================= Helper =================
+    # ================= Helpers =================
     def _publish_action(self, cmd: str):
         out = String()
         out.data = cmd
@@ -151,24 +171,7 @@ class UniNaVidNode(Node):
         if msg is None:
             return None
         buf = np.frombuffer(msg.data, dtype=np.uint8)
-        # imdecode -> BGR, come cv2.imread nella pipeline offline di UniNaVid
         return cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    
-    def ensure_model(model_path: str, repo_id: str = UNINAVID_REPO_ID) -> str:
-        if os.path.isdir(model_path) and os.listdir(model_path):
-            return model_path
-        os.makedirs(model_path, exist_ok=True)
-        snapshot_download(repo_id=repo_id, local_dir=model_path, local_dir_use_symlinks=False)
-        return model_path
-
-
-
-
-
-
-
-
-
 
 
 def main(args=None):
