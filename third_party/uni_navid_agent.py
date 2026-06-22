@@ -14,6 +14,7 @@ from UniNavid.uninavid.mm_utils import (
     KeywordsStoppingCriteria,
 )
 from UniNavid.uninavid.model.builder import load_pretrained_model
+
 from UniNavid.uninavid.constants import (
     IMAGE_TOKEN_INDEX,
     DEFAULT_IMAGE_TOKEN,
@@ -53,6 +54,11 @@ class UniNaVid_Agent():
             "Your assigned tasks is: '{}'. Analyze this sereis of images to determine your next "
             "four actions. The predicted action should be one of the following: forward, left, "
             "right or stop."
+        )
+        self.answer_template = (
+            "Imagine you are a robot programmed for navigation tasks. You have been given "
+            "a video of historical observations and an image of the current observation <image>. "
+            "Based on your observations, answer the following question: '{}'. Answer:"
         )
 
         self.rgb_list = []
@@ -196,3 +202,9 @@ class UniNaVid_Agent():
         self.executed_steps += 1
         self.latest_action = {"step": self.executed_steps, "path": [traj], "actions": action_list}
         return self.latest_action.copy()
+
+    def answer(self, question, frame):
+        # second-phase EQA: query the accumulated video memory with the question
+        self.rgb_list.append(frame)
+        qs = self.answer_template.format(question)
+        return self.predict_inference(qs)   # returns raw text, NOT action tokens
