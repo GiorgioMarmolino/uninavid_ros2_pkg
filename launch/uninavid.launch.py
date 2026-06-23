@@ -22,20 +22,20 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
 
-    navila_package = 'navila_ros2_bridge'
+    uninavid_pkg = 'uninavid'
 
     # -------------------------------------------------------------------------------
     # Launch Configurations and Expressions
-    enable_safety = LaunchConfiguration("enable_safety")
+    enable_safety = LaunchConfiguration("safety")
     env =           LaunchConfiguration("env")  # "sim" or "lab"
 
     action_out_topic = PythonExpression(["'/cmd_vel_raw' if '", enable_safety, "' == 'true' else '/cmd_vel'"])
     config_filename = PythonExpression(
-        ["'sim_navila_config.yaml' if '", env,
-         "' == 'sim' else 'lab_navila_config.yaml'"]
+        ["'sim_uninavid.yaml' if '", env,
+         "' == 'sim' else 'lab_uninavid.yaml'"]
     )
     config_file = PathJoinSubstitution(
-        [FindPackageShare(navila_package), 'config', config_filename]
+        [FindPackageShare(uninavid_pkg), 'config', config_filename]
     )
     use_sim_time = PythonExpression(
         ["'true' if '", env, "' == 'sim' else 'false'"]
@@ -77,7 +77,7 @@ def generate_launch_description():
     # ROS2 Nodes
         # Action node: everything from config, except the dynamic output topic.
         Node(
-            package=navila_package,
+            package=uninavid_pkg,
             executable='action_node',
             name='action_node',
             namespace='',
@@ -91,7 +91,7 @@ def generate_launch_description():
 
         # Safety layer: fully from config. Started only if enable_safety == true.
         Node(
-            package=navila_package,
+            package=uninavid_pkg,
             executable='safety_layer_node',
             name='safety_layer_node',
             namespace='',
@@ -103,10 +103,10 @@ def generate_launch_description():
 
         ExecuteProcess(
             cmd=[
-                'xterm', '-title', 'NaVILA Goal Input', '-e',
+                'xterm', '-title', 'UniNaVid Goal Input', '-e',
                 'bash -c "source /opt/ros/humble/setup.bash && '
                 'source /home/ros_ws/install/setup.bash && '
-                'ros2 run navila_ros2_bridge instruction_node; '
+                'ros2 run uninavid instruction_node; '
                 'echo DONE; read"'
             ],
             output='screen',
@@ -119,9 +119,9 @@ def generate_launch_description():
             period=6.0,
             actions=[
                 Node(
-                    package=navila_package,
-                    executable='navila_super_node',
-                    name='navila_super_node',
+                    package=uninavid_pkg,
+                    executable='navid_node',
+                    name='navid_node',
                     output='screen',
                     emulate_tty=True,
                     parameters=[config_file],

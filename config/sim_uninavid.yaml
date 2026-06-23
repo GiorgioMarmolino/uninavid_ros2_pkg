@@ -1,0 +1,124 @@
+# ============================================================================
+# sim_uninavid.yaml
+#
+# Simulation profile (use_sim_time = true) for the Uni-NaVid -> Husky pipeline.
+# Aligned with the current nodes:
+
+#   uninavid_node (+ vla_base_node) | action_node | safety_layer_node
+#
+# Pipeline:
+#   uninavid_node --/uninavid/action--> action_node --/cmd_vel_raw-->
+#   safety_layer_node --/cmd_vel--> twist_mux
+#   safety_layer_node --/safety/path_blocked--> action_node (forward abort)
+# ============================================================================
+
+
+# ----------------------------------------------------------------------------
+# uninavid_node
+# ----------------------------------------------------------------------------
+uninavid_node:
+  ros__parameters:
+    use_sim_time: true
+
+    # Model
+    model_path: "/models/uni-navid"    # uni-navid checkpoint dir (verify vs your mount)
+    task:       "vln"                  # vln | objectnav | eqa | following
+
+    # Topics
+    image_topic:  "/sensors/front_camera/color/image_raw/compressed"
+
+    goal_topic:   "/goal_instruction"
+
+    action_topic: "/uninavid/action"
+    reset_topic:  "/uninavid/reset"
+    status_topic: "/uninavid/primitive_status"
+    answer_topic: "/uninavid/answer"   # EQA text answers land here
+
+
+# ----------------------------------------------------------------------------
+# action_node
+# ----------------------------------------------------------------------------
+action_node:
+  ros__parameters:
+    use_sim_time: true
+
+    # Topics — action/status MUST match uninavid_node above
+    action_topic:       "/uninavid/action"
+    status_topic:       "/uninavid/primitive_status"
+
+    odom_topic:         "/platform/odom/filtered"   # must be published & flowing: execute-first relies on it
+
+    path_blocked_topic: "/safety/path_blocked"      # must match safety_layer_node
+    # cmd_vel_topic is NOT set here: the launch file sets it
+    #   safety ON  -> /cmd_vel_raw
+    #   safety OFF -> /cmd_vel
+
+    # Fixed primitive magnitudes (Uni-NaVid canonical action: 25 cm / 30 deg)
+    forward_step_m:   0.25
+    turn_step_deg:    30.0
+
+    # Execution speeds (how fast each fixed step is covered)
+    linear_x:         0.5     # m/s
+    angular_z:        0.35    # rad/s
+
+    # Smoothing
+    publish_rate_sec: 0.05    # 20 Hz
+    max_acc_linear:   1.0     # m/s^2
+    max_acc_angular:  2.0     # rad/s^2
+
+
+# ----------------------------------------------------------------------------
+# safety_layer_node  (PointCloud2 front-end + predictive footprint sweep)
+# ----------------------------------------------------------------------------
+safety_layer_node:
+  ros__parameters:
+    use_sim_time:       true
+
+    # Topics
+    cmd_in_topic:       "/cmd_vel_raw"
+    cmd_out_topic:      "/cmd_vel"
+    cloud_topic:        "/velodyne_points"   # <-- sim PointCloud2 (NOT a LaserScan). Point at your sim VLP-16 points topic
+    depth_topic:        "/sensors/front_camera/depth/image_raw"
+    path_blocked_topic: "/safety/path_blocked"   # must match action_node
+    enable_depth:       false
+    publish_grid:       true                 # publish /safety/occupancy for RViz (sim debug); false to save overhead
+    occupancy_topic:    "/safety/occupancy"
+
+    # Frames / ground removal
+    base_frame:         "base_link"      # TF base_link <- <cloud frame> must exist
+    ground_clip_z:      0.10             # m  below this -> floor, ignored
+    max_obstacle_z:     1.50             # m  above this -> overhead clearance, ignored
+
+    # Local occupancy grid
+    grid_res:   0.05    # m
+    grid_range: 4.0     # m  half-size (+/-)
+
+    # Robot footprint (Husky ~0.99 x 0.67 m, base_link centered)
+    robot_half_length: 0.50
+    robot_half_width:  0.34
+    footprint_margin:  0.12
+
+    # Predictive footprint sweep
+    predict_horizon_sec: 2.0
+    predict_dt:          0.10
+    block_debounce:      3     # consecutive cycles before latching path_blocked
+
+    # Safety distances
+    front_stop_dist: 1.2    # m  hard stop
+    front_slow_dist: 1.5    # m  start slowing
+    side_stop_dist:  1.0    # m
+    rear_stop_dist:  1.2    # m
+
+    # Sector FOVs
+    front_fov_deg: 45.0
+    side_fov_deg:  20.0
+    rear_fov_deg:  10.0
+
+    # Timeouts / smoothing
+    cloud_timeout_sec: 0.5    # s  no cloud -> STOP
+    cmd_timeout_sec:   1.5    # s  watchdog on incoming command
+    depth_timeout_sec: 0.5    # s  beyond this depth is stale
+    publish_rate_sec:  0.05   # 20 Hz
+    max_acc_linear:    1.0
+    max_acc_angular:   2.0
+    turn_reduction:    0.4
