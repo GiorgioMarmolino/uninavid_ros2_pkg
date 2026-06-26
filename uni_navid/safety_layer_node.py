@@ -89,6 +89,7 @@ DEFAULT_FOOTPRINT_MARGIN = 0.12  # m
 
 # Predictive sweep
 DEFAULT_PREDICT_HORIZON = 2.0    # s
+DEFAULT_PREDICT_TURN_DEG= 90.0   # deg
 DEFAULT_PREDICT_DT      = 0.10   # s
 DEFAULT_BLOCK_DEBOUNCE  = 3      # consecutive cycles before latching path_blocked
 
@@ -122,6 +123,7 @@ class SafetyLayerNode(Node):
         self.declare_parameter("robot_half_width",      DEFAULT_ROBOT_HALF_WID)
         self.declare_parameter("footprint_margin",      DEFAULT_FOOTPRINT_MARGIN)
         self.declare_parameter("predict_horizon_sec",   DEFAULT_PREDICT_HORIZON)
+        self.declare_parameter("predict_turn_deg",      DEFAULT_PREDICT_TURN_DEG)
         self.declare_parameter("predict_dt",            DEFAULT_PREDICT_DT)
         self.declare_parameter("block_debounce",        DEFAULT_BLOCK_DEBOUNCE)
 
@@ -164,6 +166,7 @@ class SafetyLayerNode(Node):
         self.robot_half_wid  = p("robot_half_width")
         self.footprint_margin = p("footprint_margin")
         self.predict_horizon = p("predict_horizon_sec")
+        self.predict_turn_rad = math.radians(p("predict_turn_deg"))
         self.predict_dt      = p("predict_dt")
         self.block_debounce  = p("block_debounce")
 
@@ -323,11 +326,13 @@ class SafetyLayerNode(Node):
     # ------------------------------------------------------------------
     @staticmethod
     def _cloud_to_xyz(msg: PointCloud2) -> np.ndarray:
+        # read_points_numpy asserts on mixed-datatype fields (x,y,z float32 +
+        # ring uint16 + ...). Restrict to x,y,z; fall back to read_points on any error.
         try:
             pts = point_cloud2.read_points_numpy(
                 msg, field_names=("x", "y", "z"), skip_nans=True)
             return np.asarray(pts, dtype=np.float32).reshape(-1, 3)
-        except AttributeError:
+        except (AttributeError, AssertionError, Exception):
             gen = point_cloud2.read_points(
                 msg, field_names=("x", "y", "z"), skip_nans=True)
             return np.array([[q[0], q[1], q[2]] for q in gen], dtype=np.float32)
@@ -393,7 +398,9 @@ class SafetyLayerNode(Node):
 
         hl = self.robot_half_len + self.footprint_margin
         hw = self.robot_half_wid + self.footprint_margin
-        n = int(self.predict_horizon / self.predict_dt)
+        n_time = int(self.predict_horizon / self.predict_dt)
+        n_turn = int(self.predict_turn_rad / (abs(w) * self.predict_dt)) if abs(w) > EPS_MOVE else 0
+        n = min(max(n_time, n_turn), 60)   # cover both motion AND swing, bounded
 
         x = y = th = 0.0
         path = 0.0

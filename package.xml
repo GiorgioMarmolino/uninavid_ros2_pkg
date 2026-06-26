@@ -3,9 +3,13 @@
 <package format="3">
   <name>uni_navid</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Uni-NaVid VLA navigation stack for ROS 2 Humble</description>
   <maintainer email="giorgio.marmolino@gmail.com">giorgio-marmolino</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

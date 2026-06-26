@@ -100,6 +100,7 @@ safety_layer_node:
 
     # Predictive footprint sweep
     predict_horizon_sec: 2.0
+    predict_turn_deg:    90.0  # deg
     predict_dt:          0.10
     block_debounce:      3     # consecutive cycles before latching path_blocked
 

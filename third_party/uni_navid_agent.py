@@ -3,31 +3,29 @@ import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "Uni-NaVid"))
+sys.path.insert(0, os.path.join(_HERE, "UniNaVid"))
 
 import numpy as np
 import torch
 
-from UniNavid.uninavid.mm_utils import (
+from uninavid.mm_utils import (
     get_model_name_from_path,
     tokenizer_image_token,
     KeywordsStoppingCriteria,
 )
-from UniNavid.uninavid.model.builder import load_pretrained_model
+from uninavid.model.builder import load_pretrained_model
 
-from UniNavid.uninavid.constants import (
+from uninavid.constants import (
     IMAGE_TOKEN_INDEX,
     DEFAULT_IMAGE_TOKEN,
     DEFAULT_IM_START_TOKEN,
     DEFAULT_IM_END_TOKEN,
 )
-from UniNavid.uninavid.conversation import conv_templates, SeparatorStyle
-
+from uninavid.conversation import conv_templates, SeparatorStyle
 
 seed = 30
 torch.manual_seed(seed)
 np.random.seed(seed)
-
 
 class UniNaVid_Agent():
     def __init__(self, model_path=None):

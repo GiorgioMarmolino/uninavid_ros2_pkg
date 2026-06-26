@@ -123,7 +123,7 @@ class ActionNode(Node):
         self.sub_action = self.create_subscription(String, action_topic, self._action_cb, 10)
         self.sub_odom = self.create_subscription(
             Odometry, odom_topic, self._odom_cb,
-            QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+            QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
                        history=HistoryPolicy.KEEP_LAST, depth=1))
         self.sub_blocked = self.create_subscription(
             Bool, path_blocked_topic, self._blocked_cb, 10)

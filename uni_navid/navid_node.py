@@ -6,9 +6,8 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import String
 
-from uni_navid.vla_base_node import VLABaseNode
-from uni_navid.third_party.uni_navid_agent import UniNaVid_Agent
-
+from vla_base.vla_base_node import VLABaseNode
+from third_party.uni_navid_agent import UniNaVid_Agent
 from huggingface_hub import snapshot_download
 
 UNINAVID_REPO_ID = "Jzzhang/Uni-NaVid"
@@ -21,29 +20,32 @@ EVA_VIT_G_URL = "https://storage.googleapis.com/sfr-vision-language-research/LAV
 #   following -> "Follow <goal>."
 VALID_TASKS = ("vln", "objectnav", "eqa", "following")
 
-
 class UniNaVidNode(VLABaseNode):
     def __init__(self):
         super().__init__("uninavid_node", "uninavid")
+        
+        answer_topic = self.get_parameter("answer_topic").value
+        self.pub_answer = self.create_publisher(String, answer_topic, 10)
+        self.get_logger().info(f"Task: {self._task}  (answer -> {answer_topic})")
 
+    def _declare_params(self):
+        self.declare_parameter(
+            "model_path",
+            os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model", "uninavid-7b-full-224-video-fps-1-grid-2"),
+        )        
+        self.declare_parameter("task", "vln")
+        self.declare_parameter("answer_topic", "/uninavid/answer")
+        self.model_path = self.get_parameter("model_path").value
         self._task = self.get_parameter("task").value.strip().lower()
         if self._task not in VALID_TASKS:
             self.get_logger().warn(f"Unknown task '{self._task}', falling back to 'vln'")
             self._task = "vln"
 
-        answer_topic = self.get_parameter("answer_topic").value
-        self.pub_answer = self.create_publisher(String, answer_topic, 10)
-        self.get_logger().info(f"Task: {self._task}  (answer -> {answer_topic})")
-
-    # ---- model-specific config ----
-    def _declare_params(self):
-        self.declare_parameter("model_path", os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni-navid"))
-        self.declare_parameter("task", "vln")               # vln | objectnav | eqa | following
-        self.declare_parameter("answer_topic", "/uninavid/answer")
-
     def load_model(self):
-        model_path = self.ensure_model(self.get_parameter("model_path").value)
-        return UniNaVid_Agent(model_path)  # agent resets itself in __init__
+        model_path = self.ensure_model(self.model_path)
+        os.chdir(os.path.join(os.environ["UNINAVID_REPO_DIR"], "UniNaVid"))
+        self.get_logger().info(f"cwd = {os.getcwd()}")
+        return UniNaVid_Agent(model_path)
 
     # ---- inference ----
     def infer_action(self, frame, goal):
@@ -86,14 +88,19 @@ class UniNaVidNode(VLABaseNode):
     def ensure_model(model_path: str, repo_id: str = UNINAVID_REPO_ID) -> str:
         if not (os.path.isdir(model_path) and os.listdir(model_path)):
             os.makedirs(model_path, exist_ok=True)
-            snapshot_download(repo_id=repo_id, local_dir=model_path, local_dir_use_symlinks=False)
+            snapshot_download(
+                repo_id=repo_id, 
+                local_dir=model_path, 
+                local_dir_use_symlinks=False,
+                allow_patterns=["*.json", "*.bin", "*.safetensors", "*.model", "*.txt", "tokenizer*"],
+            )
 
         models_root = os.environ["UNINAVID_MODEL_PATH"]
         eva_dst = os.path.join(models_root, "eva_vit_g.pth")
         if not os.path.isfile(eva_dst):
             urllib.request.urlretrieve(EVA_VIT_G_URL, eva_dst)
 
-        link = os.path.join(os.environ["UNINAVID_REPO_DIR"], "model_zoo", "eva_vit_g.pth")
+        link = os.path.join(os.environ["UNINAVID_REPO_DIR"], "UniNaVid", "model_zoo", "eva_vit_g.pth")
         os.makedirs(os.path.dirname(link), exist_ok=True)
         if not os.path.islink(link):
             if os.path.exists(link):
