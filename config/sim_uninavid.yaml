@@ -34,6 +34,11 @@ uninavid_node:
     status_topic: "/uninavid/primitive_status"
     answer_topic: "/uninavid/answer"   # EQA text answers land here
 
+    # debug
+    save_debug_frames: false
+    debug_dir: "/tmp/uninavid_debug"
+    frame_rgb: true
+
 
 # ----------------------------------------------------------------------------
 # action_node

@@ -10,6 +10,9 @@ from vla_base.vla_base_node import VLABaseNode
 from third_party.uni_navid_agent import UniNaVid_Agent
 from huggingface_hub import snapshot_download
 
+import cv2
+import time
+
 UNINAVID_REPO_ID = "Jzzhang/Uni-NaVid"
 EVA_VIT_G_URL = "https://storage.googleapis.com/sfr-vision-language-research/LAVIS/models/BLIP2/eva_vit_g.pth"
 
@@ -35,6 +38,17 @@ class UniNaVidNode(VLABaseNode):
         )        
         self.declare_parameter("task", "vln")
         self.declare_parameter("answer_topic", "/uninavid/answer")
+        self.declare_parameter("save_debug_frames", True)
+        self.declare_parameter("debug_dir", "/tmp/uninavid_debug")
+        self.declare_parameter("frame_rgb", True)   # imwrite vuole BGR: converto se RGB
+
+        self._save_debug = self.get_parameter("save_debug_frames").value
+        self._frame_is_rgb = self.get_parameter("frame_rgb").value
+        self._debug_dir = self.get_parameter("debug_dir").value
+        self._debug_run = None
+        self._debug_idx = 0
+        self._debug_last_instr = None
+
         self.model_path = self.get_parameter("model_path").value
         self._task = self.get_parameter("task").value.strip().lower()
         if self._task not in VALID_TASKS:
@@ -52,7 +66,10 @@ class UniNaVidNode(VLABaseNode):
         # frames are already RGB upstream -> no BGR conversion
         instruction = self._format_instruction(goal)
         result = self._agent.act({"instruction": instruction, "observations": frame})
-        return result["actions"]
+        actions = result["actions"]
+        if self._save_debug:
+            self._save_debug_frame(frame, instruction, actions)
+        return actions
 
     def _format_instruction(self, goal: str) -> str:
         if self._task == "objectnav":
@@ -108,6 +125,44 @@ class UniNaVidNode(VLABaseNode):
             os.symlink(eva_dst, link)
 
         return model_path
+
+    def _save_debug_frame(self, frame, instruction, actions):
+        if instruction != self._debug_last_instr:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            self._debug_run = os.path.join(self._debug_dir, f"run_{ts}")
+            os.makedirs(self._debug_run, exist_ok=True)
+            self._debug_idx = 0
+            self._debug_last_instr = instruction
+
+        img = frame.copy()
+        if self._frame_is_rgb:
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)   # imwrite salva BGR
+
+        executed = actions[0] if actions else "-"
+        chunk = " ".join(actions)
+        h, w = img.shape[:2]
+
+        cv2.rectangle(img, (0, 0), (w, 72), (0, 0, 0), -1)
+        cv2.putText(img, f"step {self._debug_idx:04d}   EXEC: {executed.upper()}",
+                    (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(img, f"chunk: {chunk}",
+                    (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(img, instruction[:70],
+                    (10, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+        # freccetta direzione dell'azione eseguita
+        cx, cy = w - 60, 40
+        if executed == "forward":
+            cv2.arrowedLine(img, (cx, cy + 12), (cx, cy - 12), (0, 255, 0), 3, tipLength=0.4)
+        elif executed in ("left", "turn_left"):
+            cv2.arrowedLine(img, (cx + 12, cy), (cx - 12, cy), (0, 255, 0), 3, tipLength=0.4)
+        elif executed in ("right", "turn_right"):
+            cv2.arrowedLine(img, (cx - 12, cy), (cx + 12, cy), (0, 255, 0), 3, tipLength=0.4)
+        elif executed == "stop":
+            cv2.circle(img, (cx, cy), 12, (0, 0, 255), -1)
+
+        cv2.imwrite(os.path.join(self._debug_run, f"frame_{self._debug_idx:05d}.png"), img)
+        self._debug_idx += 1
 
 
 def main(args=None):

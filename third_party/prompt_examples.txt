@@ -5,7 +5,7 @@ Go to the nearest desk and stop in front of it.
 Navigate to the middle desk and stop facing it.
 Reach the area marked by the yellow and black tape on the floor and stop at its edge.
 Go to the fire extinguisher and stop right in front of it.
-Move to the charging station and stop next to it.
+Move to the column and stop next to it.
 
 Vision-language navigation (multi-step)
 
