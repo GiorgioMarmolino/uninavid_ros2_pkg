@@ -41,7 +41,7 @@ setup(
         'console_scripts': [
             'uninavid_node = uni_navid.navid_node:main',
             'action_node = uni_navid.action_node:main',
-            'safety_node = uni_navid.safety_layer_node:main',
+            'safety_layer_node = uni_navid.safety_layer_node:main',
             'instruction_node = uni_navid.instruction_node:main',
         ],
     },

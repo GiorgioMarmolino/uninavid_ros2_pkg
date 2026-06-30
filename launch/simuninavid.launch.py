@@ -22,11 +22,11 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
 
-    uninavid_pkg = 'uninavid'
+    uninavid_pkg = 'uni_navid'
 
     # -------------------------------------------------------------------------------
     # Launch Configurations and Expressions
-    enable_safety = LaunchConfiguration("safety")
+    enable_safety = LaunchConfiguration("enable_safety")
 
     action_out_topic = PythonExpression(["'/cmd_vel_raw' if '", enable_safety, "' == 'true' else '/cmd_vel'"])
     config_filename = "sim_uninavid.yaml"
@@ -54,7 +54,7 @@ def generate_launch_description():
                 )
             ),
             launch_arguments={
-                'use_sim_time': True,
+                'use_sim_time': 'true',
                 # 'pcd_input': '/sensors/lidar3d_0/points',
                 # 'scan_output': 'scan',
                 # 'lidar_frame': 'lidar3d_0_laser',
@@ -107,7 +107,7 @@ def generate_launch_description():
             actions=[
                 Node(
                     package=uninavid_pkg,
-                    executable='navid_node',
+                    executable='uninavid_node',
                     name='uninavid_node',
                     output='screen',
                     emulate_tty=True,
