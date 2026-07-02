@@ -121,7 +121,7 @@ safety_layer_node:
     rear_fov_deg:  10.0
 
     # Timeouts / smoothing
-    cloud_timeout_sec: 0.5    # s  no cloud -> STOP
+    cloud_timeout_sec: 2.5    # s  no cloud -> STOP
     cmd_timeout_sec:   1.5    # s  watchdog on incoming command
     depth_timeout_sec: 0.5    # s  beyond this depth is stale
     publish_rate_sec:  0.05   # 20 Hz

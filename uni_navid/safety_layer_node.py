@@ -228,13 +228,15 @@ class SafetyLayerNode(Node):
         # I/O
         # ------------------------------------------------------------------
 
+        reliability = ReliabilityPolicy.RELIABLE
+
         qos_cloud = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,   # o BEST_EFFORT
+            reliability=reliability,   # o BEST_EFFORT
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
         qos_cmd_vel = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
+            reliability=reliability,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
             durability=DurabilityPolicy.VOLATILE,
