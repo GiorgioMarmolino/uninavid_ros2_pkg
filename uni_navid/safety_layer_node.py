@@ -227,19 +227,27 @@ class SafetyLayerNode(Node):
         # ------------------------------------------------------------------
         # I/O
         # ------------------------------------------------------------------
-        self.sub_cmd   = self.create_subscription(Twist, cmd_in_topic, self._cmd_cb, 10)
-        self.sub_cloud = self.create_subscription(
-            PointCloud2, cloud_topic, self._cloud_cb, qos_profile_sensor_data)
-        if self.enable_depth:
-            self.sub_depth = self.create_subscription(
-                Image, depth_topic, self._depth_cb, qos_profile_sensor_data)
 
+        qos_cloud = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,   # o BEST_EFFORT
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
         qos_cmd_vel = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
             durability=DurabilityPolicy.VOLATILE,
         )
+        
+        self.sub_cmd   = self.create_subscription(Twist, cmd_in_topic, self._cmd_cb, 10)
+        self.sub_cloud = self.create_subscription(
+            PointCloud2, cloud_topic, self._cloud_cb, qos_cloud)
+        if self.enable_depth:
+            self.sub_depth = self.create_subscription(
+                Image, depth_topic, self._depth_cb, qos_profile_sensor_data)
+
+        
         self.pub_cmd_vel = self.create_publisher(Twist, cmd_out_topic, qos_cmd_vel)
         self.pub_blocked = self.create_publisher(Bool, path_blocked_topic, 10)
         if self.publish_grid:

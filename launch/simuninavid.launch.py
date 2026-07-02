@@ -93,7 +93,7 @@ def generate_launch_description():
                 'xterm', '-title', 'UniNaVid Goal Input', '-e',
                 'bash -c "source /opt/ros/humble/setup.bash && '
                 'source /home/ros_ws/install/setup.bash && '
-                'ros2 run uninavid instruction_node; '
+                'ros2 run uni_navid instruction_node; '
                 'echo DONE; read"'
             ],
             output='screen',

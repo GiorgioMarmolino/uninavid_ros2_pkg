@@ -21,7 +21,7 @@ uninavid_node:
     use_sim_time: true
 
     # Model
-    model_path: "/models/uni_navid_model/uninavid-7b-full-224-video-fps-1-grid-2"    # uni-navid checkpoint dir (verify vs your mount)
+    model_path: "/models/uni_navid_model"    # uni-navid checkpoint dir (verify vs your mount)
     task:       "vln"                  # vln | objectnav | eqa | following
 
     # Topics
@@ -34,9 +34,9 @@ uninavid_node:
     status_topic: "/uninavid/primitive_status"
     answer_topic: "/uninavid/answer"   # EQA text answers land here
 
-    # debug
+    # debugs
     save_debug_frames: false
-    debug_dir: "/tmp/uninavid_debug"
+    debug_dir: "/home/ros_ws/tmp/uninavid_debug"
     frame_rgb: true
 
 

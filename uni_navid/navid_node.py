@@ -34,7 +34,7 @@ class UniNaVidNode(VLABaseNode):
     def _declare_params(self):
         self.declare_parameter(
             "model_path",
-            os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model", "uninavid-7b-full-224-video-fps-1-grid-2"),
+            os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model"),
         )        
         self.declare_parameter("task", "vln")
         self.declare_parameter("answer_topic", "/uninavid/answer")
@@ -103,15 +103,26 @@ class UniNaVidNode(VLABaseNode):
     # ---- weights / encoder setup ----
     @staticmethod
     def ensure_model(model_path: str, repo_id: str = UNINAVID_REPO_ID) -> str:
+        # model_path = download folder (es. /models/uni_navid_model)
         if not (os.path.isdir(model_path) and os.listdir(model_path)):
             os.makedirs(model_path, exist_ok=True)
             snapshot_download(
-                repo_id=repo_id, 
-                local_dir=model_path, 
-                local_dir_use_symlinks=False,
+                repo_id=repo_id,
+                local_dir=model_path,
                 allow_patterns=["*.json", "*.bin", "*.safetensors", "*.model", "*.txt", "tokenizer*"],
             )
 
+        #
+        if os.path.isfile(os.path.join(model_path, "config.json")):
+            ckpt = model_path
+        else:
+            subs = [os.path.join(model_path, d) for d in sorted(os.listdir(model_path))
+                    if os.path.isfile(os.path.join(model_path, d, "config.json"))]
+            if not subs:
+                raise FileNotFoundError(f"No config.json found in {model_path} or its subfolders")
+            ckpt = subs[0]
+
+        # ---- EVA encoder
         models_root = os.environ["UNINAVID_MODEL_PATH"]
         eva_dst = os.path.join(models_root, "eva_vit_g.pth")
         if not os.path.isfile(eva_dst):
@@ -124,7 +135,7 @@ class UniNaVidNode(VLABaseNode):
                 os.remove(link)
             os.symlink(eva_dst, link)
 
-        return model_path
+        return ckpt
 
     def _save_debug_frame(self, frame, instruction, actions):
         if instruction != self._debug_last_instr:
