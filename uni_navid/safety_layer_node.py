@@ -233,12 +233,12 @@ class SafetyLayerNode(Node):
         qos_cloud = QoSProfile(
             reliability=reliability,   # o BEST_EFFORT
             history=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=10,
         )
         qos_cmd_vel = QoSProfile(
             reliability=reliability,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=10,
             durability=DurabilityPolicy.VOLATILE,
         )
         
