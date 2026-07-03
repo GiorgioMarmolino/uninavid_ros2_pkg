@@ -40,7 +40,7 @@ class UniNaVidNode(VLABaseNode):
         self.declare_parameter("answer_topic", "/uninavid/answer")
         self.declare_parameter("save_debug_frames", True)
         self.declare_parameter("debug_dir", "/tmp/uninavid_debug")
-        self.declare_parameter("frame_rgb", True)   # imwrite vuole BGR: converto se RGB
+        self.declare_parameter("frame_rgb", True)
 
         self._save_debug = self.get_parameter("save_debug_frames").value
         self._frame_is_rgb = self.get_parameter("frame_rgb").value
@@ -111,8 +111,6 @@ class UniNaVidNode(VLABaseNode):
                 local_dir=model_path,
                 allow_patterns=["*.json", "*.bin", "*.safetensors", "*.model", "*.txt", "tokenizer*"],
             )
-
-        #
         if os.path.isfile(os.path.join(model_path, "config.json")):
             ckpt = model_path
         else:
