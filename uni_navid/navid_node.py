@@ -67,6 +67,7 @@ class UniNaVidNode(VLABaseNode):
         instruction = self._format_instruction(goal)
         result = self._agent.act({"instruction": instruction, "observations": frame})
         actions = result["actions"]
+        self.get_logger().info(f"Next actions: {actions}")
         if self._save_debug:
             self._save_debug_frame(frame, instruction, actions)
         return actions

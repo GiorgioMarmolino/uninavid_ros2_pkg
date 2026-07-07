@@ -256,7 +256,7 @@ class SafetyLayerNode(Node):
             self.pub_grid = self.create_publisher(OccupancyGrid, occupancy_topic, 1)
 
         self._publish_timer = self.create_timer(publish_rate, self._publish_cb)
-        self._debug_timer   = self.create_timer(3.0, self._debug_cb)
+        self._debug_timer   = self.create_timer(6.0, self._debug_cb)
 
         self.get_logger().info(
             f"safety_layer_node started\n"
@@ -450,7 +450,7 @@ class SafetyLayerNode(Node):
             lin = ang = 0.0
 
         elif cloud_dt > self.cloud_timeout_sec:
-            self.get_logger().warn("CLOUD TIMEOUT -> STOP", throttle_duration_sec=1.0)
+            self.get_logger().warn("CLOUD TIMEOUT -> STOP", throttle_duration_sec=3.0)
             lin = ang = 0.0
 
         else:
