@@ -40,7 +40,7 @@ class UniNaVidNode(VLABaseNode):
         self.declare_parameter("answer_topic", "/uninavid/answer")
         self.declare_parameter("save_debug_frames", True)
         self.declare_parameter("debug_dir", "/tmp/uninavid_debug")
-        self.declare_parameter("frame_rgb", True)
+        self.declare_parameter("frame_rgb", False)
 
         self._save_debug = self.get_parameter("save_debug_frames").value
         self._frame_is_rgb = self.get_parameter("frame_rgb").value
@@ -65,7 +65,10 @@ class UniNaVidNode(VLABaseNode):
     def infer_action(self, frame, goal):
         # frames are already RGB upstream -> no BGR conversion
         instruction = self._format_instruction(goal)
-        result = self._agent.act({"instruction": instruction, "observations": frame})
+        model_frame = frame
+        if not self._frame_is_rgb:
+            model_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = self._agent.act({"instruction": instruction, "observations": model_frame})
         actions = result["actions"]
         self.get_logger().info(f"Next actions: {actions}")
         if self._save_debug:

@@ -37,7 +37,7 @@ uninavid_node:
     # debug
     save_debug_frames: true
     debug_dir: "/home/ros_ws/tmp/uninavid_debug"
-    frame_rgb: true
+    frame_rgb: false
 
 
 # ----------------------------------------------------------------------------

@@ -22,13 +22,13 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
 
-    uninavid_pkg = 'uninavid'
+    uninavid_pkg = 'uni_navid'
 
     # -------------------------------------------------------------------------------
     # Launch Configurations and Expressions
-    enable_safety = LaunchConfiguration("safety")
+    safety = LaunchConfiguration("safety")
 
-    action_out_topic = PythonExpression(["'/cmd_vel_raw' if '", enable_safety, "' == 'true' else '/cmd_vel'"])
+    action_out_topic = PythonExpression(["'/cmd_vel_raw' if '", safety, "' == 'true' else '/cmd_vel'"])
     config_filename = "test_uninavid.yaml"
     config_file = PathJoinSubstitution(
         [FindPackageShare(uninavid_pkg), 'config', config_filename]
@@ -39,7 +39,7 @@ def generate_launch_description():
     # -------------------------------------------------------------------------------
     # Declare Launch Arguments and Include Other Launch Files
        DeclareLaunchArgument(
-            "enable_safety",
+            "safety",
             default_value="true",
             choices=["true", "false"],
             description="If true, start safety_layer_node between action node and twist_mux; if false, action node publishes straight to /cmd_vel.",
@@ -54,7 +54,7 @@ def generate_launch_description():
                 )
             ),
             launch_arguments={
-                'use_sim_time': True,
+                'use_sim_time': 'true',
                 # 'pcd_input': '/sensors/lidar3d_0/points',
                 # 'scan_output': 'scan',
                 # 'lidar_frame': 'lidar3d_0_laser',
@@ -76,7 +76,7 @@ def generate_launch_description():
             ],
         ),
 
-        # Safety layer: fully from config. Started only if enable_safety == true.
+        # Safety layer: fully from config. Started only if safety == true.
         Node(
             package=uninavid_pkg,
             executable='safety_layer_node',
@@ -84,7 +84,7 @@ def generate_launch_description():
             namespace='',
             output='screen',
             emulate_tty=True,
-            condition=IfCondition(enable_safety),
+            condition=IfCondition(safety),
             parameters=[config_file],
         ),
 
@@ -93,7 +93,7 @@ def generate_launch_description():
                 'xterm', '-title', 'UniNaVid Goal Input', '-e',
                 'bash -c "source /opt/ros/humble/setup.bash && '
                 'source /home/ros_ws/install/setup.bash && '
-                'ros2 run uninavid instruction_node; '
+                'ros2 run uni_navid instruction_node; '
                 'echo DONE; read"'
             ],
             output='screen',
