@@ -21,7 +21,7 @@ uninavid_node:
     use_sim_time: false
 
     # Model
-    model_path: "/models/uni-navid"    # uni-navid checkpoint dir (verify vs your mount)
+    model_path: "/models/uni_navid_model"    # uni-navid checkpoint dir (verify vs your mount)
     task:       "vln"                  # vln | objectnav | eqa | following
 
     # Topics
@@ -35,8 +35,8 @@ uninavid_node:
     answer_topic: "/uninavid/answer"   # EQA text answers land here
 
     # debug
-    save_debug_frames: false
-    debug_dir: "/tmp/uninavid_debug"
+    save_debug_frames: true
+    debug_dir: "/home/ros_ws/tmp/uninavid_debug"
     frame_rgb: true
 
 

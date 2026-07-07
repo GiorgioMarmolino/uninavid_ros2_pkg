@@ -35,7 +35,7 @@ uninavid_node:
     answer_topic: "/uninavid/answer"   # EQA text answers land here
 
     # debugs
-    save_debug_frames: false
+    save_debug_frames: true
     debug_dir: "/home/ros_ws/tmp/uninavid_debug"
     frame_rgb: true
 
