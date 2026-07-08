@@ -5,10 +5,19 @@ import threading
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import (
+    QoSProfile, 
+    ReliabilityPolicy, 
+    HistoryPolicy, 
+    DurabilityPolicy
+)
 from rclpy.executors import MultiThreadedExecutor
 
-from std_msgs.msg import String, Empty
+from std_msgs.msg import (
+    String, 
+    Empty, 
+    Bool
+)
 from sensor_msgs.msg import CompressedImage
 
 from third_party.uni_navid_agent import UniNaVid_Agent
@@ -38,23 +47,26 @@ class UniNaVidNode(Node):
         #------------------------------------------------------------------------
         # ============================ Paramters ================================
         #------------------------------------------------------------------------
+        d = lambda name, default: self.declare_parameter(name, default)
         # inference topics
-        self.declare_parameter("image_topic",       "/sensors/front_camera/color/image_raw/compressed")
-        self.declare_parameter("goal_topic",        "/goal_instruction")
+        self.d("image_topic",       "/sensors/front_camera/color/image_raw/compressed")
+        self.d("goal_topic",        "/goal_instruction")
 
         # uninavid topics
-        self.declare_parameter("action_topic",      "/uninavid/action")
-        self.declare_parameter("reset_topic",       "/uninavid/reset")
-        self.declare_parameter("status_topic",      "/uninavid/primitive_status")
-        self.declare_parameter("answer_topic",      "/uninavid/answer")
+        self.d("action_topic",      "/uninavid/action")
+        self.d("reset_topic",       "/uninavid/reset")
+        self.d("status_topic",      "/uninavid/primitive_status")
+        self.d("answer_topic",      "/uninavid/answer")
+        self.d("complete_topic",    "/uninavid/complete")
+        
 
-        self.declare_parameter("model_path", os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model"))        
-        self.declare_parameter("task",              "vln")
+        self.d("model_path", os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model"))        
+        self.d("task",              "vln")
         
         # debug 
-        self.declare_parameter("save_debug_frames", True)
-        self.declare_parameter("debug_dir",         "/tmp/uninavid_debug")
-        self.declare_parameter("frame_rgb",         False)      # considering frame from compressed to decoded
+        self.d("save_debug_frames", True)
+        self.d("debug_dir",         "/tmp/uninavid_debug")
+        self.d("frame_rgb",         False)      # considering frame from compressed to decoded
 
         #------------------------------------------------------------------------
         p = lambda n: self.get_parameter(n).value
@@ -67,6 +79,7 @@ class UniNaVidNode(Node):
         reset_topic =               p("reset_topic")
         status_topic =              p("status_topic")
         answer_topic =              p("answer_topic")
+        complete_topic =            p("complete_topic")
         self.model_path =           p("model_path")
         self._task =                p("task").strip().lower()
         self._save_debug =          p("save_debug_frames")
@@ -104,18 +117,24 @@ class UniNaVidNode(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
+        qos_event = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            husitry=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
 
         #------------------------------------------------------------------------
         # ============================ Sub/Pub ==================================
         #------------------------------------------------------------------------
         # Subsribers
-        self.sub_image = self.create_subscription(CompressedImage,  image_topic,    self._image_cb,     qos_sensor)
-        self.sub_goal = self.create_subscription(String,            goal_topic,     self._goal_cb,      10)
-        self.sub_reset = self.create_subscription(Empty,            reset_topic,    self._reset_cb,     10)
-        self.sub_status = self.create_subscription(String,          status_topic,   self._status_cb,    10)
+        self.sub_image =    self.create_subscription(CompressedImage,  image_topic,    self._image_cb,     qos_sensor)
+        self.sub_goal =     self.create_subscription(String,           goal_topic,     self._goal_cb,      10)
+        self.sub_reset =    self.create_subscription(Empty,            reset_topic,    self._reset_cb,     10)
+        self.sub_status =   self.create_subscription(String,           status_topic,   self._status_cb,    10)
         # Publishers
-        self.pub_action = self.create_publisher(String, action_topic, 10)
-        self.pub_answer = self.create_publisher(String, answer_topic, 10)
+        self.pub_action =   self.create_publisher(String,              action_topic,                       10)
+        self.pub_answer =   self.create_publisher(String,              answer_topic,                       10)
+        self.pub_complete = self.create_publisher(Bool,                complete_topic,                     qos_event)
 
         self.get_logger().info(f"Task: {self._task}  (answer -> {answer_topic})")
 
@@ -159,6 +178,17 @@ class UniNaVidNode(Node):
         with self._lock:
             self._busy = False
         self._advance()
+
+    def _publish(self, publisher, text: str):
+        out = String()
+        out.data = text
+        publisher.publish(out)
+
+    def _publish_complete(self):
+        msg = Bool()
+        msg.data = True
+        self.pub_complete.publish(msg)
+
     #------------------------------------------------------------------------endcallbacks
 
     #------------------------------------------------------------------------
@@ -301,6 +331,7 @@ class UniNaVidNode(Node):
 
     # ---- stop handling (task-dependent) ----
     def _on_stop(self):
+        # EMBODIED QUESTION ANSWERING
         if self._task == "eqa":
             with self._lock:
                 question = self._goal
@@ -312,14 +343,21 @@ class UniNaVidNode(Node):
                 self.get_logger().info(f"EQA answer: {answer}")
             with self._lock:
                 self._goal = None
+            self._publish_complete()
+
+        # HUMAN FOLLOWING
         elif self._task == "following":
             # target reached / idle: keep the goal; _advance will re-arm an
             # inference on the next status so we keep tracking if it moves again.
             self.get_logger().info("Following: caught up / target idle - keep tracking")
-        else:  # vln, objectnav
+
+
+        # VLN / OBJECTNAV
+        else:
             with self._lock:
                 self._goal = None
             self.get_logger().info("STOP reached - goal complete")
+            self._publish_complete()
     #------------------------------------------------------------------------endpipeline
 
     #------------------------------------------------------------------------
@@ -363,11 +401,6 @@ class UniNaVidNode(Node):
     #------------------------------------------------------------------------
     # ============================ Helpers ==================================
     #------------------------------------------------------------------------
-    def _publish(self, publisher, text: str):
-        out = String()
-        out.data = text
-        publisher.publish(out)
-
     def _reset(self):
         with self._agent_lock:
             if self._agent is not None:
