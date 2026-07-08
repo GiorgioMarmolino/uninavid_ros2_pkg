@@ -309,11 +309,13 @@ class UniNaVidNode(Node):
                 adopted = True
 
             if self._queue:
-                action = self._queue.popleft()
+                action = self._queue.popleft().strip().lower()
                 self._busy = True
                 # Launch the next inference in parallel only when we START a new
                 # chunk (not while draining), and never right before a stop.
                 need_infer = adopted and action != "stop"
+                if action == "stop":
+                    self._queue.clear()
             else:
                 # queue empty: guarantee that some inference is on its way so a
                 # new plan will arrive and re-trigger _advance from the worker.
