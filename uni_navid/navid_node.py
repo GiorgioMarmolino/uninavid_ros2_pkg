@@ -82,11 +82,21 @@ class UniNaVidNode(Node):
         self._debug_last_instr = None
         self._agent = None
         self._model_ready = False
-        self._lock = threading.Lock()
         self._last_image_msg = None
         self._goal = None
-        self._queue = deque()
-        self._busy = False
+
+        # ---- async pipeline state ----
+        self._queue = deque()            # actions of the current (adopted) chunk still to run
+        self._pending_actions = None     # fresh chunk produced by the background inference, not yet adopted
+        self._busy = False               # a primitive is being executed (waiting for its status)
+        self._infer_running = False      # a background inference is currently in flight
+
+        # ---- locks ----
+        # _lock  : short critical sections on shared state (queue, flags, goal, last image)
+        # _agent_lock : held only around the (slow) agent calls act()/answer()/reset(),
+        #               so there is never more than one inference touching the video memory.
+        self._lock = threading.Lock()
+        self._agent_lock = threading.Lock()
 
         # ---- i/o ----
         qos_sensor = QoSProfile(
@@ -122,21 +132,33 @@ class UniNaVidNode(Node):
         goal = msg.data.strip()
         if not goal:
             return
-        self._goal = goal
-        self._busy = False
+        with self._lock:
+            self._goal = goal
+            self._queue.clear()          # drop leftover actions of the previous goal
+            self._pending_actions = None
+            self._busy = False
         self.get_logger().info(f"New goal: {goal}")
-        self._step()                      # no memory reset
-
+        self._launch_inference()         # bootstrap the pipeline (no video-memory reset)
 
     def _reset_cb(self, msg: Empty):
-        self._goal = None
+        with self._lock:
+            self._goal = None
         self._reset()
         self.get_logger().info("Reset")
 
     def _status_cb(self, msg: String):
-        if msg.data.strip().lower() in ("done", "aborted", "idle", "ready"):
+        status = msg.data.strip().lower()
+        if status not in ("done", "aborted", "idle", "ready"):
+            return
+        if status == "aborted":
+            # the primitive was vetoed (e.g. safety layer): the current plan is
+            # stale, so throw it away and re-plan from the current observation.
+            with self._lock:
+                self._queue.clear()
+                self._pending_actions = None
+        with self._lock:
             self._busy = False
-            self._step()            
+        self._advance()
     #------------------------------------------------------------------------endcallbacks
 
     #------------------------------------------------------------------------
@@ -168,15 +190,18 @@ class UniNaVidNode(Node):
 
         # preflight 2: aspetta il goal
         while rclpy.ok():
-            if self._goal is not None:
+            with self._lock:
+                have_goal = self._goal is not None
+            if have_goal:
                 break
             self.get_logger().warn("Waiting for goal instruction...", throttle_duration_sec=2.0)
             time.sleep(0.2)
         self.get_logger().info(f"Goal received: {self._goal}")
-        self._step()
+        self._launch_inference()          # kick off the first inference of the pipeline
     #--------------------------------------------------endloading
 
     def infer_action(self, frame, goal):
+        "Run one forward pass of the agent. Caller MUST hold self._agent_lock."
         instruction = self._format_instruction(goal)
         model_frame = frame
         if not self._frame_is_rgb:
@@ -195,43 +220,107 @@ class UniNaVidNode(Node):
             return f"Follow {goal}."
         return goal  # vln, eqa: raw instruction / question
 
+    #------------------------------------------------------------------------
+    # ============================ Async pipeline ===========================
+    #------------------------------------------------------------------------
+    def _launch_inference(self):
+        "Fire the next inference in a background thread, if none is running."
+        with self._lock:
+            if self._infer_running or self._goal is None or not self._model_ready:
+                return
+            self._infer_running = True
+        threading.Thread(target=self._inference_worker, daemon=True).start()
 
-    #------------------------------------------------------------------------
-    # ============================ Step-synchronous loop ====================
-    #------------------------------------------------------------------------
-    def _step(self):
-        if self._busy or self._goal is None or not self._model_ready:
+    def _inference_worker(self):
+        "Background inference. Its output lands in _pending_actions and is"
+        "adopted by _advance at the next action boundary."
+        actions = None
+        try:
+            with self._lock:
+                goal = self._goal
+            frame = self._decode_latest()
+            if frame is not None and goal is not None:
+                with self._agent_lock:            # serialize access to the video memory
+                    actions = self.infer_action(frame, goal)
+        except Exception as e:
+            self.get_logger().error(f"Inference error: {e}")
+            actions = None
+
+        with self._lock:
+            self._infer_running = False
+            # discard the result if the goal was cleared/changed in the meantime
+            if actions and self._goal is not None:
+                self._pending_actions = list(actions)
+            idle = (not self._busy) and (len(self._queue) == 0)
+
+        # if the robot is standing idle waiting for a plan, start executing now
+        if idle:
+            self._advance()
+
+    def _advance(self):
+        """Action-boundary scheduler, called at every primitive completion.
+
+        - If a fresh chunk is ready -> ADOPT it and start executing from it,
+          launching the next inference in parallel.
+        - Otherwise -> keep DRAINING the previous chunk (fallback for slow HW).
+        - If nothing is left -> make sure an inference is in flight; the worker
+          will restart us when it finishes.
+        """
+        action = None
+        need_infer = False
+        with self._lock:
+            if self._goal is None or not self._model_ready or self._busy:
+                return
+
+            adopted = False
+            if self._pending_actions is not None:
+                self._queue = deque(self._pending_actions)
+                self._pending_actions = None
+                adopted = True
+
+            if self._queue:
+                action = self._queue.popleft()
+                self._busy = True
+                # Launch the next inference in parallel only when we START a new
+                # chunk (not while draining), and never right before a stop.
+                need_infer = adopted and action != "stop"
+            else:
+                # queue empty: guarantee that some inference is on its way so a
+                # new plan will arrive and re-trigger _advance from the worker.
+                need_infer = not self._infer_running
+
+        if need_infer:
+            self._launch_inference()
+
+        if action is None:
             return
-        frame = self._decode_latest()
-        if frame is None:
-            return
-        actions = self.infer_action(frame, self._goal)
-        if not actions:
-            return
-        action = actions[0]
-        self._busy = True
-        self.__publish(action)
+
+        self._publish(self.pub_action, action)
         if action == "stop":
             self._on_stop()
-    
+
     # ---- stop handling (task-dependent) ----
     def _on_stop(self):
         if self._task == "eqa":
-            question = self._goal
+            with self._lock:
+                question = self._goal
             frame = self._decode_latest()
-            if frame is not None:
-                answer = self._agent.answer(question, frame)
-                self._publish(answer)
+            if frame is not None and question is not None:
+                with self._agent_lock:
+                    answer = self._agent.answer(question, frame)
+                self._publish(self.pub_answer, answer)
                 self.get_logger().info(f"EQA answer: {answer}")
-            self._goal = None
+            with self._lock:
+                self._goal = None
         elif self._task == "following":
-            # target reached / idle: keep the goal, the person may move again
+            # target reached / idle: keep the goal; _advance will re-arm an
+            # inference on the next status so we keep tracking if it moves again.
             self.get_logger().info("Following: caught up / target idle - keep tracking")
         else:  # vln, objectnav
-            self._goal = None
+            with self._lock:
+                self._goal = None
             self.get_logger().info("STOP reached - goal complete")
-    #------------------------------------------------------------------------loopsyncstep
-
+    #------------------------------------------------------------------------endpipeline
 
     #------------------------------------------------------------------------
     # ============================ weights / encoder setup ==================
@@ -271,7 +360,6 @@ class UniNaVidNode(Node):
         return ckpt
     #------------------------------------------------------------------------endencodersetup
 
-
     #------------------------------------------------------------------------
     # ============================ Helpers ==================================
     #------------------------------------------------------------------------
@@ -281,11 +369,13 @@ class UniNaVidNode(Node):
         publisher.publish(out)
 
     def _reset(self):
-        with self._lock:
+        with self._agent_lock:
             if self._agent is not None:
                 self._agent.reset()
-        self._queue.clear()
-        self._busy = False
+        with self._lock:
+            self._queue.clear()
+            self._pending_actions = None
+            self._busy = False
 
     def _decode_latest(self):
         "Decode frames from CompressedImage to Image; image is given as BGR"
@@ -295,7 +385,7 @@ class UniNaVidNode(Node):
             return None
         buf = np.frombuffer(msg.data, dtype=np.uint8)
         return cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    
+
     # @staticmethod
     # def make_sensor_qos(reliability: str, depth: int = 1) -> QoSProfile:
     #     "This can be used in case code need to be tested both in simulation (Gazebo/Rviz2) and reality to set reliability as RELIABLE or BEST_EFFORT"
@@ -303,9 +393,6 @@ class UniNaVidNode(Node):
     #         else ReliabilityPolicy.BEST_EFFORT)
     #     return QoSProfile(reliability=rel, history=HistoryPolicy.KEEP_LAST, depth=depth)
     #------------------------------------------------------------------------endhelpers
-
-
-
 
     #------------------------------------------------------------------------
     # ============================ DEBUG ====================================
@@ -348,12 +435,6 @@ class UniNaVidNode(Node):
         cv2.imwrite(os.path.join(self._debug_run, f"frame_{self._debug_idx:05d}.png"), img)
         self._debug_idx += 1
     #------------------------------------------------------------------------enddebug
-
-
-
-
-
-
 
 
 def main(args=None):
