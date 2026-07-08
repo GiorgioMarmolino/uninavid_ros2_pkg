@@ -31,33 +31,55 @@ EVA_VIT_G_URL = "https://storage.googleapis.com/sfr-vision-language-research/LAV
 VALID_TASKS = ("vln", "objectnav", "eqa", "following")
 
 
+class UniNaVidNode(Node):
+    def __init__(self):
+        super().__init__("uninavid_node")
 
-class VLABaseNode(Node):
-    """Base node for VLA navigation models: step-synchronous discrete-action loop."""
+        #------------------------------------------------------------------------
+        # ============================ Paramters ================================
+        #------------------------------------------------------------------------
+        # inference topics
+        self.declare_parameter("image_topic",       "/sensors/front_camera/color/image_raw/compressed")
+        self.declare_parameter("goal_topic",        "/goal_instruction")
 
-    def __init__(self, node_name, vla_model):
-        super().__init__(node_name)
+        # uninavid topics
+        self.declare_parameter("action_topic",      "/uninavid/action")
+        self.declare_parameter("reset_topic",       "/uninavid/reset")
+        self.declare_parameter("status_topic",      "/uninavid/primitive_status")
+        self.declare_parameter("answer_topic",      "/uninavid/answer")
 
-        # ---- parameters ----
-        self.declare_parameter("image_topic", "/sensors/front_camera/color/image_raw/compressed")
-        self.declare_parameter("goal_topic", "/goal_instruction")
-        self.declare_parameter("action_topic", f"/{vla_model}/action")
-        self.declare_parameter("reset_topic", f"/{vla_model}/reset")
-        self.declare_parameter("status_topic", f"/{vla_model}/primitive_status")
+        self.declare_parameter("model_path", os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model"))        
+        self.declare_parameter("task",              "vln")
+        
+        # debug 
+        self.declare_parameter("save_debug_frames", True)
+        self.declare_parameter("debug_dir",         "/tmp/uninavid_debug")
+        self.declare_parameter("frame_rgb",         False)      # considering frame from compressed to decoded
 
-    
-        self._declare_params()
+        #------------------------------------------------------------------------
+        p = lambda n: self.get_parameter(n).value
 
-        prm = lambda n: self.get_parameter(n).value
+        self._frame_is_rgb =        p("frame_rgb")
+        self._debug_dir =           p("debug_dir")
+        image_topic =               p("image_topic")
+        goal_topic =                p("goal_topic")
+        action_topic =              p("action_topic")
+        reset_topic =               p("reset_topic")
+        status_topic =              p("status_topic")
+        answer_topic =              p("answer_topic")
+        self.model_path =           p("model_path")
+        self._task =                p("task").strip().lower()
+        self._save_debug =          p("save_debug_frames")
 
-        image_topic = prm("image_topic")
-        goal_topic = prm("goal_topic")
-        action_topic = prm("action_topic")
-        reset_topic = prm("reset_topic")
-        status_topic = prm("status_topic")
-
+        if self._task not in VALID_TASKS:
+            self.get_logger().warn(f"Unknown task '{self._task}', falling back to 'vln'")
+            self._task = "vln"
+        #------------------------------------------------------------------------
 
         # ---- state ----
+        self._debug_run = None
+        self._debug_idx = 0
+        self._debug_last_instr = None
         self._agent = None
         self._model_ready = False
         self._lock = threading.Lock()
@@ -66,42 +88,66 @@ class VLABaseNode(Node):
         self._queue = deque()
         self._busy = False
 
-        # ---- I/O ----
+        # ---- i/o ----
         qos_sensor = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
-        self.sub_image = self.create_subscription(CompressedImage, image_topic, self._image_cb, qos_sensor)
-        self.sub_goal = self.create_subscription(String, goal_topic, self._goal_cb, 10)
-        self.sub_reset = self.create_subscription(Empty, reset_topic, self._reset_cb, 10)
-        self.sub_status = self.create_subscription(String, status_topic, self._status_cb, 10)
+
+        #------------------------------------------------------------------------
+        # ============================ Sub/Pub ==================================
+        #------------------------------------------------------------------------
+        # Subsribers
+        self.sub_image = self.create_subscription(CompressedImage,  image_topic,    self._image_cb,     qos_sensor)
+        self.sub_goal = self.create_subscription(String,            goal_topic,     self._goal_cb,      10)
+        self.sub_reset = self.create_subscription(Empty,            reset_topic,    self._reset_cb,     10)
+        self.sub_status = self.create_subscription(String,          status_topic,   self._status_cb,    10)
+        # Publishers
         self.pub_action = self.create_publisher(String, action_topic, 10)
+        self.pub_answer = self.create_publisher(String, answer_topic, 10)
+
+        self.get_logger().info(f"Task: {self._task}  (answer -> {answer_topic})")
 
         threading.Thread(target=self._load_model_thread, daemon=True).start()
 
-    # ================= To implement in subclass =================
-    def _declare_params(self):
-        """Declare model-specific parameters (e.g. model_path). Override if needed."""
-        pass
+    #------------------------------------------------------------------------
+    # ============================ Callbacks ================================
+    #------------------------------------------------------------------------
+    def _image_cb(self, msg: CompressedImage):
+        with self._lock:
+            self._last_image_msg = msg
 
-    def load_model(self):
-        """Build and return the VLA agent (download weights if needed)."""
-        raise NotImplementedError
+    def _goal_cb(self, msg: String):
+        goal = msg.data.strip()
+        if not goal:
+            return
+        self._goal = goal
+        self._busy = False
+        self.get_logger().info(f"New goal: {goal}")
+        self._step()                      # no memory reset
 
-    def infer_action(self, frame, goal):
-        """Return a list of discrete action tokens for the given frame/goal."""
-        raise NotImplementedError
 
-    def reset_agent(self):
-        """Reset the agent's internal history. Override if needed."""
-        if self._agent is not None:
-            self._agent.reset()
+    def _reset_cb(self, msg: Empty):
+        self._goal = None
+        self._reset()
+        self.get_logger().info("Reset")
 
-    # ================= Model loading =================
+    def _status_cb(self, msg: String):
+        if msg.data.strip().lower() in ("done", "aborted", "idle", "ready"):
+            self._busy = False
+            self._step()            
+    #------------------------------------------------------------------------endcallbacks
+
+    #------------------------------------------------------------------------
+    # ============================ Model Loading ============================
+    #------------------------------------------------------------------------
     def _load_model_thread(self):
         try:
-            agent = self.load_model()
+            model_path = self.ensure_model(self.model_path)
+            os.chdir(os.path.join(os.environ["UNINAVID_REPO_DIR"], "UniNaVid"))
+            self.get_logger().info(f"cwd = {os.getcwd()}")
+            agent = UniNaVid_Agent(model_path)
             with self._lock:
                 self._agent = agent
                 self._model_ready = True
@@ -127,140 +173,10 @@ class VLABaseNode(Node):
             self.get_logger().warn("Waiting for goal instruction...", throttle_duration_sec=2.0)
             time.sleep(0.2)
         self.get_logger().info(f"Goal received: {self._goal}")
+        self._step()
+    #--------------------------------------------------endloading
 
-    def _wait_for_image(self, timeout_sec=None):
-        waited = 0.0
-        while rclpy.ok():
-            with self._lock:
-                have = self._last_image_msg is not None
-            if have:
-                self.get_logger().info("Image stream OK")
-                return True
-            self.get_logger().info(
-                f"Waiting for image frame on '{self.sub_image.topic_name}'...",
-                throttle_duration_sec=3.0)
-            time.sleep(0.5)
-            waited += 0.5
-            if timeout_sec is not None and waited >= timeout_sec:
-                self.get_logger().error("Image stream NOT arriving - check topic/QoS/bridge")
-                return False
-        return False
-
-    # ================= Callbacks =================
-    def _image_cb(self, msg: CompressedImage):
-        with self._lock:
-            self._last_image_msg = msg
-
-    def _goal_cb(self, msg: String):
-        goal = msg.data.strip()
-        if not goal:
-            return
-        self._goal = goal
-        self._busy = False
-        self.get_logger().info(f"New goal: {goal}")
-        self._step()                      # no memory reset
-
-
-    def _reset_cb(self, msg: Empty):
-        self._goal = None
-        self._reset()
-        self.get_logger().info("Reset")
-
-    def _status_cb(self, msg: String):
-        if msg.data.strip().lower() in ("done", "aborted", "idle", "ready"):
-            self._busy = False
-            self._step()            
-
-    # ================= Step-synchronous loop =================
-    def _step(self):
-        if self._busy or self._goal is None or not self._model_ready:
-            return
-        frame = self._decode_latest()
-        if frame is None:
-            return
-        actions = self.infer_action(frame, self._goal)
-        if not actions:
-            return
-        action = actions[0]               # execute-first: il chunk è un hint d'orizzonte
-        self._busy = True
-        self._publish_action(action)
-        if action == "stop":
-            self._on_stop()
-    
-    def _on_stop(self):
-        """Called when the model emits 'stop'. Override for task-specific behavior."""
-        self._goal = None
-        self.get_logger().info("STOP reached")
-
-    # ================= Helpers =================
-    def _publish_action(self, cmd: str):
-        out = String()
-        out.data = cmd
-        self.pub_action.publish(out)
-
-    def _reset(self):
-        with self._lock:
-            self.reset_agent()
-        self._queue.clear()
-        self._busy = False
-
-    def _decode_latest(self):
-        with self._lock:
-            msg = self._last_image_msg
-        if msg is None:
-            return None
-        buf = np.frombuffer(msg.data, dtype=np.uint8)
-        return cv2.imdecode(buf, cv2.IMREAD_COLOR)
-
-    def make_sensor_qos(reliability: str, depth: int = 1) -> QoSProfile:
-        rel = (ReliabilityPolicy.RELIABLE if reliability.strip().lower() == "reliable"
-            else ReliabilityPolicy.BEST_EFFORT)
-        return QoSProfile(reliability=rel, history=HistoryPolicy.KEEP_LAST, depth=depth)
-
-
-
-
-class UniNaVidNode(VLABaseNode):
-    def __init__(self):
-        super().__init__("uninavid_node", "uninavid")
-        
-        answer_topic = self.get_parameter("answer_topic").value
-        self.pub_answer = self.create_publisher(String, answer_topic, 10)
-        self.get_logger().info(f"Task: {self._task}  (answer -> {answer_topic})")
-
-    def _declare_params(self):
-        self.declare_parameter(
-            "model_path",
-            os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model"),
-        )        
-        self.declare_parameter("task", "vln")
-        self.declare_parameter("answer_topic", "/uninavid/answer")
-        self.declare_parameter("save_debug_frames", True)
-        self.declare_parameter("debug_dir", "/tmp/uninavid_debug")
-        self.declare_parameter("frame_rgb", False)
-
-        self._save_debug = self.get_parameter("save_debug_frames").value
-        self._frame_is_rgb = self.get_parameter("frame_rgb").value
-        self._debug_dir = self.get_parameter("debug_dir").value
-        self._debug_run = None
-        self._debug_idx = 0
-        self._debug_last_instr = None
-
-        self.model_path = self.get_parameter("model_path").value
-        self._task = self.get_parameter("task").value.strip().lower()
-        if self._task not in VALID_TASKS:
-            self.get_logger().warn(f"Unknown task '{self._task}', falling back to 'vln'")
-            self._task = "vln"
-
-    def load_model(self):
-        model_path = self.ensure_model(self.model_path)
-        os.chdir(os.path.join(os.environ["UNINAVID_REPO_DIR"], "UniNaVid"))
-        self.get_logger().info(f"cwd = {os.getcwd()}")
-        return UniNaVid_Agent(model_path)
-
-    # ---- inference ----
     def infer_action(self, frame, goal):
-        # frames are already RGB upstream -> no BGR conversion
         instruction = self._format_instruction(goal)
         model_frame = frame
         if not self._frame_is_rgb:
@@ -279,6 +195,25 @@ class UniNaVidNode(VLABaseNode):
             return f"Follow {goal}."
         return goal  # vln, eqa: raw instruction / question
 
+
+    #------------------------------------------------------------------------
+    # ============================ Step-synchronous loop ====================
+    #------------------------------------------------------------------------
+    def _step(self):
+        if self._busy or self._goal is None or not self._model_ready:
+            return
+        frame = self._decode_latest()
+        if frame is None:
+            return
+        actions = self.infer_action(frame, self._goal)
+        if not actions:
+            return
+        action = actions[0]
+        self._busy = True
+        self.__publish(action)
+        if action == "stop":
+            self._on_stop()
+    
     # ---- stop handling (task-dependent) ----
     def _on_stop(self):
         if self._task == "eqa":
@@ -286,7 +221,7 @@ class UniNaVidNode(VLABaseNode):
             frame = self._decode_latest()
             if frame is not None:
                 answer = self._agent.answer(question, frame)
-                self._publish_answer(answer)
+                self._publish(answer)
                 self.get_logger().info(f"EQA answer: {answer}")
             self._goal = None
         elif self._task == "following":
@@ -295,13 +230,12 @@ class UniNaVidNode(VLABaseNode):
         else:  # vln, objectnav
             self._goal = None
             self.get_logger().info("STOP reached - goal complete")
+    #------------------------------------------------------------------------loopsyncstep
 
-    def _publish_answer(self, text: str):
-        out = String()
-        out.data = text
-        self.pub_answer.publish(out)
 
-    # ---- weights / encoder setup ----
+    #------------------------------------------------------------------------
+    # ============================ weights / encoder setup ==================
+    #------------------------------------------------------------------------
     @staticmethod
     def ensure_model(model_path: str, repo_id: str = UNINAVID_REPO_ID) -> str:
         # model_path = download folder (es. /models/uni_navid_model)
@@ -335,7 +269,47 @@ class UniNaVidNode(VLABaseNode):
             os.symlink(eva_dst, link)
 
         return ckpt
+    #------------------------------------------------------------------------endencodersetup
 
+
+    #------------------------------------------------------------------------
+    # ============================ Helpers ==================================
+    #------------------------------------------------------------------------
+    def _publish(self, publisher, text: str):
+        out = String()
+        out.data = text
+        publisher.publish(out)
+
+    def _reset(self):
+        with self._lock:
+            if self._agent is not None:
+                self._agent.reset()
+        self._queue.clear()
+        self._busy = False
+
+    def _decode_latest(self):
+        "Decode frames from CompressedImage to Image; image is given as BGR"
+        with self._lock:
+            msg = self._last_image_msg
+        if msg is None:
+            return None
+        buf = np.frombuffer(msg.data, dtype=np.uint8)
+        return cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    
+    # @staticmethod
+    # def make_sensor_qos(reliability: str, depth: int = 1) -> QoSProfile:
+    #     "This can be used in case code need to be tested both in simulation (Gazebo/Rviz2) and reality to set reliability as RELIABLE or BEST_EFFORT"
+    #     rel = (ReliabilityPolicy.RELIABLE if reliability.strip().lower() == "reliable"
+    #         else ReliabilityPolicy.BEST_EFFORT)
+    #     return QoSProfile(reliability=rel, history=HistoryPolicy.KEEP_LAST, depth=depth)
+    #------------------------------------------------------------------------endhelpers
+
+
+
+
+    #------------------------------------------------------------------------
+    # ============================ DEBUG ====================================
+    #------------------------------------------------------------------------
     def _save_debug_frame(self, frame, instruction, actions):
         if instruction != self._debug_last_instr:
             ts = time.strftime("%Y%m%d_%H%M%S")
@@ -346,7 +320,7 @@ class UniNaVidNode(VLABaseNode):
 
         img = frame.copy()
         if self._frame_is_rgb:
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)   # imwrite salva BGR
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)   # imwrite saves BGR
 
         executed = actions[0] if actions else "-"
         chunk = " ".join(actions)
@@ -373,6 +347,13 @@ class UniNaVidNode(VLABaseNode):
 
         cv2.imwrite(os.path.join(self._debug_run, f"frame_{self._debug_idx:05d}.png"), img)
         self._debug_idx += 1
+    #------------------------------------------------------------------------enddebug
+
+
+
+
+
+
 
 
 def main(args=None):
