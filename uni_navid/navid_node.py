@@ -1,4 +1,65 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
+"""
+uninavid_node.py — Uni-NaVid VLA policy node with asynchronous inference.
+
+Consumes a compressed RGB stream and a natural-language goal, and emits discrete
+navigation primitives (forward / left / right / stop) that action_node executes
+one at a time. The model runs as a stateful video policy: every act() call
+appends the latest frame to a persistent video memory and predicts a CHUNK of
+future actions (Uni-NaVid emits ~4 per pass, paper Sec. IV).
+
+Task conditioning is purely textual (paper, Sec. V). `task` selects how the raw
+goal becomes the instruction:
+    vln / eqa   -> raw instruction / question (used verbatim)
+    objectnav   -> "Search for <goal>."
+    following   -> "Follow <goal>."
+
+Asynchronous (non-blocking) pipeline
+------------------------------------
+Instead of inferring, executing one action, then stalling for the next
+inference, this node overlaps the two (paper: ~0.2 s per chunk, observations
+uploaded asynchronously while pending actions run):
+
+    * a fresh chunk is ADOPTED and its first action is dispatched, while the
+      next inference is launched in a background thread (_inference_worker);
+    * at every primitive boundary (_advance, triggered by primitive_status),
+      if a newer chunk is ready it REPLACES the current one; otherwise the node
+      keeps DRAINING the previous chunk (graceful fallback on slow hardware);
+    * exactly one primitive is in flight at a time (_busy) and exactly one
+      inference at a time (_infer_running + _agent_lock guard the video memory).
+
+Handshake with action_node is strictly 1:1 — one action published per
+primitive_status ('done' / 'aborted') round-trip. On 'aborted' (e.g. the safety
+layer vetoed a forward) the current plan is dropped and inference re-plans from
+the current frame.
+
+Task-dependent stop handling (_on_stop)
+---------------------------------------
+    vln / objectnav : 'stop' is terminal -> clear goal, publish `complete`.
+    eqa             : 'stop' triggers the answering phase (agent.answer over the
+                      accumulated navigation history) -> publish `answer`, then
+                      clear goal and publish `complete`.
+    following       : 'stop' means "target reached / idle" and is NOT terminal
+                      -> goal is kept and the node re-arms inference to keep
+                      tracking if the target moves again.
+
+A reset (Empty on reset_topic) clears the goal, the action queue and the video
+memory (agent.reset()).
+
+Subscribes:
+            <image_topic>        (CompressedImage)  — front camera, BGR/JPEG
+            <goal_topic>         (String)           — natural-language goal
+            <reset_topic>        (Empty)            — reset goal + video memory
+            <status_topic>       (String)           — 'done' / 'aborted' from action_node
+Publishes:
+            <action_topic>       (String)           — one primitive per round-trip
+            <answer_topic>       (String)           — EQA textual answer
+            <complete_topic>     (Bool)             — True when a vln/objectnav/eqa
+                                                      episode terminates
+"""
+
+
 import os
 import urllib.request
 import threading
@@ -49,24 +110,24 @@ class UniNaVidNode(Node):
         #------------------------------------------------------------------------
         d = lambda name, default: self.declare_parameter(name, default)
         # inference topics
-        self.d("image_topic",       "/sensors/front_camera/color/image_raw/compressed")
-        self.d("goal_topic",        "/goal_instruction")
+        d("image_topic",       "/sensors/front_camera/color/image_raw/compressed")
+        d("goal_topic",        "/goal_instruction")
 
         # uninavid topics
-        self.d("action_topic",      "/uninavid/action")
-        self.d("reset_topic",       "/uninavid/reset")
-        self.d("status_topic",      "/uninavid/primitive_status")
-        self.d("answer_topic",      "/uninavid/answer")
-        self.d("complete_topic",    "/uninavid/complete")
+        d("action_topic",      "/uninavid/action")
+        d("reset_topic",       "/uninavid/reset")
+        d("status_topic",      "/uninavid/primitive_status")
+        d("answer_topic",      "/uninavid/answer")
+        d("complete_topic",    "/uninavid/complete")
         
 
-        self.d("model_path", os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model"))        
-        self.d("task",              "vln")
+        d("model_path", os.path.join(os.environ["UNINAVID_MODEL_PATH"], "uni_navid_model"))        
+        d("task",              "vln")
         
         # debug 
-        self.d("save_debug_frames", True)
-        self.d("debug_dir",         "/tmp/uninavid_debug")
-        self.d("frame_rgb",         False)      # considering frame from compressed to decoded
+        d("save_debug_frames", True)
+        d("debug_dir",         "/tmp/uninavid_debug")
+        d("frame_rgb",         False)      # considering frame from compressed to decoded
 
         #------------------------------------------------------------------------
         p = lambda n: self.get_parameter(n).value
