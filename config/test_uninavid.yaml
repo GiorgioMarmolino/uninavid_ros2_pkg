@@ -1,15 +1,25 @@
 # ============================================================================
 # lab_uninavid.yaml
 #
-# Laboratory profile (use_sim_time = false) for the Uni-NaVid -> Husky pipeline.
+# Real-robot profile (use_sim_time = false) for the Uni-NaVid -> Husky pipeline.
 # Aligned with the current nodes:
-
 #   uninavid_node (+ vla_base_node) | action_node | safety_layer_node
 #
 # Pipeline:
 #   uninavid_node --/uninavid/action--> action_node --/cmd_vel_raw-->
 #   safety_layer_node --/cmd_vel--> twist_mux
 #   safety_layer_node --/safety/path_blocked--> action_node (forward abort)
+#
+# Episode signalling:
+#   uninavid_node --/uninavid/answer----> (EQA text answer)
+#   uninavid_node --/uninavid/complete--> (Bool True on vln/objectnav/eqa done)
+#
+# NOTE: `task` is intentionally NOT set here. It is provided as a launch-file
+#       default (vln) and overridden by hand at launch time when needed:
+#           ros2 launch <pkg> uninavid_lab.launch.py task:=eqa
+#
+# Ground truth for benchmarking is Vicon, NOT odometry. odom below is only the
+# closed-loop feedback that action_node uses to execute fixed primitives.
 # ============================================================================
 
 
@@ -22,21 +32,28 @@ uninavid_node:
 
     # Model
     model_path: "/models/uni_navid_model"    # uni-navid checkpoint dir (verify vs your mount)
-    task:       "vln"                  # vln | objectnav | eqa | following
+    # task: set via launch file (default vln), override at launch time
 
     # Topics
-    image_topic:  "/sensors/front_camera/color/image_raw/compressed"
+    # VERIFY against camera_utils_ros output on the real ZED: the node subscribes
+    # to a CompressedImage and cv2.imdecode gives BGR. Keep the same interface as
+    # sim if camera_utils_ros republishes under /sensors/front_camera/...
+    image_topic:    "/sensors/front_camera/color/image_raw/compressed"
 
-    goal_topic:   "/goal_instruction"
+    goal_topic:     "/goal_instruction"
 
-    action_topic: "/uninavid/action"
-    reset_topic:  "/uninavid/reset"
-    status_topic: "/uninavid/primitive_status"
-    answer_topic: "/uninavid/answer"   # EQA text answers land here
+    action_topic:   "/uninavid/action"
+    reset_topic:    "/uninavid/reset"
+    status_topic:   "/uninavid/primitive_status"
+    answer_topic:   "/uninavid/answer"     # EQA text answers land here
+    complete_topic: "/uninavid/complete"   # Bool True when a vln/objectnav/eqa episode ends
 
-    # debug
+    # debugs
     save_debug_frames: true
     debug_dir: "/home/ros_ws/tmp/uninavid_debug"
+    # frame_rgb=false => node converts BGR->RGB before the model. On the real ZED
+    # path double-check colors are not already swapped (the classic BGR/RGB bug):
+    # a debug frame with correct-looking colors == frame_rgb is set right.
     frame_rgb: false
 
 
@@ -51,7 +68,10 @@ action_node:
     action_topic:       "/uninavid/action"
     status_topic:       "/uninavid/primitive_status"
 
-    odom_topic:         "/platform/odom/filtered"   # must be published & flowing: execute-first relies on it
+    # Husky EKF odom. MUST be live BEFORE the first goal: with no odom the node
+    # replies 'done' immediately to every primitive and the VLA burns inferences
+    # in place without moving.
+    odom_topic:         "/platform/odom/filtered"
 
     path_blocked_topic: "/safety/path_blocked"      # must match safety_layer_node
     # cmd_vel_topic is NOT set here: the launch file sets it
@@ -62,8 +82,9 @@ action_node:
     forward_step_m:   0.25
     turn_step_deg:    30.0
 
-    # Execution speeds (how fast each fixed step is covered)
-    linear_x:         0.5     # m/s
+    # Execution speeds — consider starting LOWER than sim for first real runs,
+    # then raise once behaviour is verified in the Vicon space.
+    linear_x:         0.4     # m/s   (sim uses 0.5)
     angular_z:        0.35    # rad/s
 
     # Smoothing
@@ -82,15 +103,18 @@ safety_layer_node:
     # Topics
     cmd_in_topic:       "/cmd_vel_raw"
     cmd_out_topic:      "/cmd_vel"
-    cloud_topic:        "/velodyne_points"   # <-- sim PointCloud2 (NOT a LaserScan). Point at your sim VLP-16 points topic
+    cloud_topic:        "/velodyne_points"   # real VLP-16 driver output (velodyne_pointcloud)
+    # Real ZED depth if you enable it, e.g. /zed/zed_node/depth/depth_registered
     depth_topic:        "/sensors/front_camera/depth/image_raw"
     path_blocked_topic: "/safety/path_blocked"   # must match action_node
     enable_depth:       false
-    publish_grid:       true                 # publish /safety/occupancy for RViz (sim debug); false to save overhead
+    publish_grid:       true                 # keep on for RViz during lab bring-up; false once trusted
     occupancy_topic:    "/safety/occupancy"
 
     # Frames / ground removal
-    base_frame:         "base_link"      # TF base_link <- <cloud frame> must exist
+    # base_frame <- <cloud frame> TF must exist on the real robot (static TF from
+    # the URDF / lidar mount). Tune ground_clip_z to the real floor return.
+    base_frame:         "base_link"
     ground_clip_z:      0.10             # m  below this -> floor, ignored
     max_obstacle_z:     1.50             # m  above this -> overhead clearance, ignored
 
@@ -110,10 +134,13 @@ safety_layer_node:
     block_debounce:      3     # consecutive cycles before latching path_blocked
 
     # Safety distances
-    front_stop_dist: 1.2    # m  hard stop
-    front_slow_dist: 1.5    # m  start slowing
-    side_stop_dist:  1.0    # m
-    rear_stop_dist:  1.2    # m
+    # TUNE to the actual free space of the lab. The sim values (1.2 / 1.5 m) can
+    # be too conservative in a small Vicon room and may keep the robot in a
+    # permanent slow/stop state; tighten them to the real clearances.
+    front_stop_dist: 0.9    # m  hard stop   (sim 1.2)
+    front_slow_dist: 1.2    # m  start slow  (sim 1.5)
+    side_stop_dist:  0.7    # m              (sim 1.0)
+    rear_stop_dist:  0.8    # m              (sim 1.2)
 
     # Sector FOVs
     front_fov_deg: 45.0
@@ -121,7 +148,7 @@ safety_layer_node:
     rear_fov_deg:  10.0
 
     # Timeouts / smoothing
-    cloud_timeout_sec: 0.5    # s  no cloud -> STOP
+    cloud_timeout_sec: 1.0    # s  no cloud -> STOP (tighter than sim: real lidar should be steady)
     cmd_timeout_sec:   1.5    # s  watchdog on incoming command
     depth_timeout_sec: 0.5    # s  beyond this depth is stale
     publish_rate_sec:  0.05   # 20 Hz

@@ -27,22 +27,27 @@ def generate_launch_description():
     # -------------------------------------------------------------------------------
     # Launch Configurations and Expressions
     safety = LaunchConfiguration("safety")
+    task   = LaunchConfiguration("task")
 
-    action_out_topic = PythonExpression(["'/cmd_vel_raw' if '", safety, "' == 'true' else '/cmd_vel'"])
-    config_filename = "test_uninavid.yaml"
-    config_file = PathJoinSubstitution(
-        [FindPackageShare(uninavid_pkg), 'config', config_filename]
-    )
+    action_cmdvel   = PythonExpression(["'/cmd_vel_raw' if '", safety, "' == 'true' else '/cmd_vel'"])
 
+    config_filename = "lab_uninavid.yaml"
+    config_file     = PathJoinSubstitution([FindPackageShare(uninavid_pkg), 'config', config_filename])
 
     return LaunchDescription([
     # -------------------------------------------------------------------------------
     # Declare Launch Arguments and Include Other Launch Files
-       DeclareLaunchArgument(
-            "safety",
-            default_value="true",
-            choices=["true", "false"],
-            description="If true, start safety_layer_node between action node and twist_mux; if false, action node publishes straight to /cmd_vel.",
+        DeclareLaunchArgument(
+            name =          "safety",
+            default_value = "false",
+            choices =       ["true", "false"],
+            description=    "If true, start safety_layer_node between action node and twist_mux; if false, action node publishes straight to /cmd_vel.",
+        ),
+        DeclareLaunchArgument(
+            name =          "task",
+            default_value = "vln",
+            choices =       ["vln", "objectnav", "eqa", "following"],
+            description =   "Task type for the model",
         ),
         
         IncludeLaunchDescription(
@@ -54,7 +59,7 @@ def generate_launch_description():
                 )
             ),
             launch_arguments={
-                'use_sim_time': 'true',
+                'use_sim_time': 'false',
                 # 'pcd_input': '/sensors/lidar3d_0/points',
                 # 'scan_output': 'scan',
                 # 'lidar_frame': 'lidar3d_0_laser',
@@ -64,28 +69,28 @@ def generate_launch_description():
     # ROS2 Nodes
         # Action node: everything from config, except the dynamic output topic.
         Node(
-            package=uninavid_pkg,
-            executable='action_node',
-            name='action_node',
-            namespace='',
-            output='screen',
-            emulate_tty=True,
-            parameters=[
+            package     =   uninavid_pkg,
+            executable  =   'action_node',
+            name        =   'action_node',
+            namespace   =   '',
+            output =        'screen',
+            emulate_tty =   True,
+            parameters =    [
                 config_file,
-                {"cmd_vel_topic": action_out_topic},
+                {"cmd_vel_topic": action_cmdvel},
             ],
         ),
 
         # Safety layer: fully from config. Started only if safety == true.
         Node(
-            package=uninavid_pkg,
-            executable='safety_layer_node',
-            name='safety_layer_node',
-            namespace='',
-            output='screen',
-            emulate_tty=True,
-            condition=IfCondition(safety),
-            parameters=[config_file],
+            package     =   uninavid_pkg,
+            executable  =   'safety_layer_node',
+            name        =   'safety_layer_node',
+            namespace   =   '',
+            output      =   'screen',
+            emulate_tty =   True,
+            condition   =   IfCondition(safety),
+            parameters  =   [config_file],
         ),
 
         ExecuteProcess(
@@ -101,17 +106,17 @@ def generate_launch_description():
         ),
 
         # Inference Node
-        # Start uninavid after 6 secs (params from config). For deterministic ordering you can replace this TimerAction with a RegisterEventHandler(OnProcessStart=...) keyed on a node that signals the sim/pipeline is actually ready.
+        # Start uninavid after 2 secs (params from config). For deterministic ordering you can replace this TimerAction with a RegisterEventHandler(OnProcessStart=...) keyed on a node that signals the sim/pipeline is actually ready.
         TimerAction(
-            period=6.0,
+            period=2.0,
             actions=[
                 Node(
-                    package=uninavid_pkg,
-                    executable='navid_node',
-                    name='navid_node',
-                    output='screen',
-                    emulate_tty=True,
-                    parameters=[config_file],
+                    package     = uninavid_pkg,
+                    executable  = 'uninavid_node',
+                    name        = 'uninavid_node',
+                    output      = 'screen',
+                    emulate_tty = True,
+                    parameters  = [config_file, "task": task],
                 ),
             ]
         ),
