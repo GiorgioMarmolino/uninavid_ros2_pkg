@@ -174,14 +174,14 @@ class UniNaVidNode(Node):
 
         # ---- i/o ----
         qos_sensor = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            reliability =   ReliabilityPolicy.BEST_EFFORT,
+            history     =   HistoryPolicy.KEEP_LAST,
+            depth       =   1,
         )
         qos_event = QoSProfile(
-            reliability=ReliabilityPolicy.RELIABLE,
-            husitry=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            reliability =   ReliabilityPolicy.RELIABLE,
+            history     =   HistoryPolicy.KEEP_LAST,
+            depth       =   1,
         )
 
         #------------------------------------------------------------------------
