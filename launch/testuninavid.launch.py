@@ -31,7 +31,7 @@ def generate_launch_description():
 
     action_cmdvel   = PythonExpression(["'/cmd_vel_raw' if '", safety, "' == 'true' else '/cmd_vel'"])
 
-    config_filename = "lab_uninavid.yaml"
+    config_filename = "test_uninavid.yaml"
     config_file     = PathJoinSubstitution([FindPackageShare(uninavid_pkg), 'config', config_filename])
 
     return LaunchDescription([
