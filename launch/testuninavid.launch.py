@@ -96,10 +96,11 @@ def generate_launch_description():
         ExecuteProcess(
             cmd=[
                 'xterm', '-title', 'UniNaVid Goal Input', '-e',
-                'bash -c "source /opt/ros/humble/setup.bash && '
+                'bash', '-c',
+                'source /opt/ros/humble/setup.bash && '
                 'source /home/ros_ws/install/setup.bash && '
-                'ros2 run uni_navid instruction_node; '
-                'echo DONE; read"'
+                'ros2 run uni_navid instruction_node '
+                'echo DONE; read'
             ],
             output='screen',
             emulate_tty=True,
@@ -116,7 +117,7 @@ def generate_launch_description():
                     name        = 'uninavid_node',
                     output      = 'screen',
                     emulate_tty = True,
-                    parameters  = [config_file, "task": task],
+                    parameters  = [config_file, {"task": task}],
                 ),
             ]
         ),
