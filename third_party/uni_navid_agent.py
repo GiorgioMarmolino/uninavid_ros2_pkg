@@ -71,7 +71,7 @@ class UniNaVid_Agent():
         video = self.image_processor.preprocess(batch_image, return_tensors="pt")["pixel_values"].half().cuda()
         return [video]
 
-    def predict_inference(self, prompt):
+    def predict_inference(self, prompt, Navigation=True):
         question = prompt.replace(DEFAULT_IMAGE_TOKEN, "").replace("\n", "")
         qs = prompt
 
@@ -118,7 +118,8 @@ class UniNaVid_Agent():
             new_list.append(video_end_special_token)
             new_list.append(image_start_special_token)
             new_list.append(image_end_special_token)
-            new_list.append(navigation_special_token)
+            if Navigation:
+                new_list.append(navigation_special_token)
             token_prompt = token_prompt[idx + 1:]
             indices_to_replace = torch.where(token_prompt == -200)[0]
 
@@ -202,7 +203,6 @@ class UniNaVid_Agent():
         return self.latest_action.copy()
 
     def answer(self, question, frame):
-        # second-phase EQA: query the accumulated video memory with the question
         self.rgb_list.append(frame)
         qs = self.answer_template.format(question)
-        return self.predict_inference(qs)   # returns raw text, NOT action tokens
+        return self.predict_inference(qs, navigation=False)   # rimuovi <NAV>

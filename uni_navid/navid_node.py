@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 """
 uninavid_node.py — Uni-NaVid VLA policy node with asynchronous inference.
 
