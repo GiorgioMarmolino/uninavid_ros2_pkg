@@ -194,7 +194,7 @@ class UniNaVidNode(Node):
         # Publishers
         self.pub_action =   self.create_publisher(String,              action_topic,                       10)
         self.pub_answer =   self.create_publisher(String,              answer_topic,                       10)
-        self.pub_complete = self.create_publisher(Bool,                complete_topic,                     qos_event)
+        self.pub_complete = self.create_publisher(String,              complete_topic,                     qos_event)
 
         self.get_logger().info(f"Task: {self._task}  (answer -> {answer_topic})")
 
@@ -245,8 +245,8 @@ class UniNaVidNode(Node):
         publisher.publish(out)
 
     def _publish_complete(self):
-        msg = Bool()
-        msg.data = True
+        msg = String()
+        msg.data = "stop"
         self.pub_complete.publish(msg)
 
     #------------------------------------------------------------------------endcallbacks

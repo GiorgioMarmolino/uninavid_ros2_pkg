@@ -37,7 +37,7 @@ uninavid_node:
     reset_topic:        "/uninavid/reset"
     status_topic:       "/uninavid/primitive_status"
     answer_topic:       "/uninavid/answer"            # EQA answers land here
-    complete_topic:     "/uninavid/complete"          # Bool True when a vln/objectnav/eqa episode ends
+    complete_topic:     "/benchmark/command"
 
     # debugs
     save_debug_frames:  true
