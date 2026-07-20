@@ -35,10 +35,7 @@ uninavid_node:
     # task: set via launch file (default vln), override at launch time
 
     # Topics
-    # VERIFY against camera_utils_ros output on the real ZED: the node subscribes
-    # to a CompressedImage and cv2.imdecode gives BGR. Keep the same interface as
-    # sim if camera_utils_ros republishes under /sensors/front_camera/...
-    image_topic:    "/sensors/front_camera/color/image_raw/compressed"
+    image_topic:    "/realsense/color/image_raw/compressed"
 
     goal_topic:     "/goal_instruction"
 
@@ -71,7 +68,7 @@ action_node:
     # Husky EKF odom. MUST be live BEFORE the first goal: with no odom the node
     # replies 'done' immediately to every primitive and the VLA burns inferences
     # in place without moving.
-    odom_topic:         "/platform/odom/filtered"
+    odom_topic:         "/platform/odom"
 
     path_blocked_topic: "/safety/path_blocked"      # must match safety_layer_node
     # cmd_vel_topic is NOT set here: the launch file sets it
@@ -79,18 +76,18 @@ action_node:
     #   safety OFF -> /cmd_vel
 
     # Fixed primitive magnitudes (Uni-NaVid canonical action: 25 cm / 30 deg)
-    forward_step_m:   0.25
-    turn_step_deg:    30.0
+    forward_step_m:   0.1
+    turn_step_deg:    10.0
 
     # Execution speeds — consider starting LOWER than sim for first real runs,
     # then raise once behaviour is verified in the Vicon space.
-    linear_x:         0.4     # m/s   (sim uses 0.5)
-    angular_z:        0.35    # rad/s
+    linear_x:         0.15     # m/s   (sim uses 0.5)
+    angular_z:        0.1    # rad/s
 
     # Smoothing
     publish_rate_sec: 0.05    # 20 Hz
     max_acc_linear:   1.0     # m/s^2
-    max_acc_angular:  2.0     # rad/s^2
+    max_acc_angular:  1.0     # rad/s^2
 
 
 # ----------------------------------------------------------------------------
