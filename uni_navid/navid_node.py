@@ -246,7 +246,7 @@ class UniNaVidNode(Node):
 
     def _publish_complete(self):
         msg = String()
-        msg.data = "done"
+        msg.data = "stop"
         self.pub_complete.publish(msg)
 
     #------------------------------------------------------------------------endcallbacks
