@@ -4,8 +4,6 @@ A modular **ROS 2 (Humble)** stack that deploys the [Uni-NaVid](https://github.c
 
 Inference runs on an external GPU workstation; only `/cmd_vel` reaches the robot.
 
-> Replace the placeholders marked `<...>` (repo URL, author, license) before publishing.
-
 ---
 <img width="640" height="480" alt="run_20260728_110555" src="https://github.com/user-attachments/assets/d49b171f-9e15-4381-990e-7c0533def811" />
 
